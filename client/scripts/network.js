@@ -381,8 +381,11 @@ class PeersManager {
     _onPeers(peers) {
         peers.forEach(peer => {
             if (this.peers[peer.id]) {
-                this.peers[peer.id].refresh();
-                return;
+                // this.peers[peer.id].refresh();
+                // return;
+
+                // Delete conn, will re-create the conn later...
+                this._onPeerLeft(peer.id)
             }
             if (window.isRtcSupported && peer.rtcSupported) {
                 this.peers[peer.id] = new RTCPeer(this._server, peer.id);
