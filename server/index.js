@@ -26,10 +26,10 @@ class SnapdropServer {
 
         console.log('Snapdrop is running on port', port);
     }
+    _initPeer(peer) {
 
+    }
     _onConnection(peer) {
-        console.log("New peer", peer.ip, peer.name);
-
         this._joinRoom(peer);
         peer.socket.on('message', message => this._onMessage(peer, message));
         peer.socket.on('error', console.error);
@@ -78,6 +78,20 @@ class SnapdropServer {
             this._send(recipient, message);
             return;
         }
+        // 修改peer的名字
+        if(message.displayName){
+            sender.modifyDisplayName(message.displayName)
+            // notify all other peers new name
+            for (const otherPeerId in this._rooms[sender.ip]) {
+                if (otherPeerId === sender.id) continue;
+                const otherPeer = this._rooms[sender.ip][otherPeerId];
+                this._send(otherPeer, {
+                    type: 'peer-modify-name',
+                    peer: sender.getInfo()
+                });
+            }
+        }
+        
     }
 
     _joinRoom(peer) {
@@ -170,7 +184,6 @@ class Peer {
         // set socket
         this.socket = socket;
 
-
         // set remote ip
         this._setIP(request);
 
@@ -227,8 +240,9 @@ class Peer {
 
         if(!deviceName)
             deviceName = 'Unknown Device';
-
-        const displayName = uniqueNamesGenerator({
+        let hasCookieDisplayName = req.url.indexOf('lastDisplayName') > -1
+        const displayName = hasCookieDisplayName? decodeURIComponent((new RegExp('[?|&]lastDisplayName='+'([^&;]+?)(&|#|;|$)').exec(req.url)||[,""])[1].replace(/\+/g,'%20'))||null :
+        uniqueNamesGenerator({
             length: 2,
             separator: ' ',
             dictionaries: [colors, animals],
@@ -252,6 +266,10 @@ class Peer {
             name: this.name,
             rtcSupported: this.rtcSupported
         }
+    }
+
+    modifyDisplayName(dispalyName) {
+        this.name.displayName = dispalyName
     }
 
     // return uuid of form xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx

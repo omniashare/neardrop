@@ -13,7 +13,9 @@ class ServerConnection {
     _connect() {
         clearTimeout(this._reconnectTimer);
         if (this._isConnected() || this._isConnecting()) return;
-        const ws = new WebSocket(this._endpoint());
+       // const ws = new WebSocket(this._endpoint());
+        const lastDisplayName = localStorage.getItem('displayname')
+        const ws = lastDisplayName ?new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName):new WebSocket(this._endpoint())
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);
@@ -43,6 +45,9 @@ class ServerConnection {
                 break;
             case 'display-name':
                 Events.fire('display-name', msg);
+                break;
+            case 'peer-modify-name':
+                Events.fire('peer-modify-name', msg.peer);
                 break;
             default:
                 console.error('WS: unkown message type', msg);
@@ -369,6 +374,7 @@ class PeersManager {
         Events.on('files-selected', e => this._onFilesSelected(e.detail));
         Events.on('send-text', e => this._onSendText(e.detail));
         Events.on('peer-left', e => this._onPeerLeft(e.detail));
+        Events.on('peer-name',e => this._onModifyName(e.detail))
     }
 
     _onMessage(message) {
@@ -412,6 +418,12 @@ class PeersManager {
         delete this.peers[peerId];
         if (!peer || !peer._peer) return;
         peer._peer.close();
+    }
+
+    //修改peer的名字
+    _onModifyName(name) {
+        const message = {displayName: name}
+        this._server.send(message)
     }
 
 }

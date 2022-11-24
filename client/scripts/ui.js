@@ -12,6 +12,15 @@ Events.on('display-name', e => {
     $displayName.textContent = 'You are known as ' + me.displayName;
     $displayName.title = me.deviceName;
 });
+Events.on('edit-name-commit',e => {
+    const name = e.detail.text
+    const $displayName = $('displayName')
+    $displayName.textContent = 'You are known as ' + name
+    Events.fire('peer-name',name)
+})
+$('editNameBt').addEventListener('click',e => {
+    Events.fire('edit-name')
+})
 
 class PeersUI {
 
@@ -21,6 +30,7 @@ class PeersUI {
         Events.on('peers', e => this._onPeers(e.detail));
         Events.on('file-progress', e => this._onFileProgress(e.detail));
         Events.on('paste', e => this._onPaste(e));
+        Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
     }
 
     _onPeerJoined(peer) {
@@ -29,7 +39,11 @@ class PeersUI {
         $$('x-peers').appendChild(peerUI.$el);
         setTimeout(e => window.animateBackground(false), 1750); // Stop animation
     }
-
+    //peer modify name 
+    _onPeerModifyName(peer) {
+        let el = $(peer.id)      
+        el.querySelector('.name').textContent = peer.name.displayName;
+    }
     _onPeers(peers) {
         this._clearPeers();
         peers.forEach(peer => this._onPeerJoined(peer));
@@ -309,7 +323,32 @@ class ReceiveDialog extends Dialog {
     }
 }
 
+class EditNameDialog extends Dialog {
+    constructor() {
+        super('editNameDialog');
+        this.$nameText = this.$el.querySelector('#nameTextInput')
+        Events.on('edit-name', e => this._onOpenEditName(e.detail))
+        const button = this.$el.querySelector('form')
+        button.addEventListener('submit', e => {
+            this._sure(e)
+        });
 
+    }
+    _onOpenEditName(){
+        this.$nameText.innerHTML = ""
+        this.show()
+    }
+    _sure(e) {
+        e.preventDefault();
+        if(this.$nameText.innerText == '') {
+            return
+        }
+        localStorage.setItem('displayname',this.$nameText.innerText)
+        Events.fire('edit-name-commit', {
+            text: this.$nameText.innerText
+        });
+    }
+}
 class SendTextDialog extends Dialog {
     constructor() {
         super('sendTextDialog');
@@ -534,6 +573,7 @@ class Snapdrop {
         Events.on('load', e => {
             const receiveDialog = new ReceiveDialog();
             const sendTextDialog = new SendTextDialog();
+            const editNameDialog = new EditNameDialog();
             const receiveTextDialog = new ReceiveTextDialog();
             const toast = new Toast();
             const notifications = new Notifications();
