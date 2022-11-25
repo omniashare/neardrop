@@ -15,7 +15,7 @@ class ServerConnection {
         if (this._isConnected() || this._isConnecting()) return;
        // const ws = new WebSocket(this._endpoint());
         const lastDisplayName = localStorage.getItem('displayname')
-        const ws = lastDisplayName ?new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName):new WebSocket(this._endpoint())
+        const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room=') : new WebSocket(this._endpoint()+'?room=')
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);

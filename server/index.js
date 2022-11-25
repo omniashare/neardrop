@@ -40,7 +40,8 @@ class SnapdropServer {
             type: 'display-name',
             message: {
                 displayName: peer.name.displayName,
-                deviceName: peer.name.deviceName
+                deviceName: peer.name.deviceName,
+                room: peer.room
             }
         });
     }
@@ -184,6 +185,9 @@ class Peer {
         // set socket
         this.socket = socket;
 
+        // set room
+        this._setPeerValues(request);
+
         // set remote ip
         this._setIP(request);
 
@@ -198,8 +202,22 @@ class Peer {
         this.lastBeat = Date.now();
     }
 
+    _setPeerValues(request) {
+        let params = (new URL(request.url, "http://server")).searchParams;
+
+        let room = params.has("room") ? params.get("room").replace(/\D/g, '') : "";
+
+        if (room.length == 6) {
+            this.room = room;
+        } else {
+            this.room = '';
+        }
+    }
+
     _setIP(request) {
-        if (request.headers['x-forwarded-for']) {
+        if (this.room){
+            this.ip = this.room;
+        } else if (request.headers['x-forwarded-for']) {
             this.ip = request.headers['x-forwarded-for'].split(/\s*,\s*/)[0];
         } else {
             this.ip = request.connection.remoteAddress;
@@ -264,6 +282,7 @@ class Peer {
         return {
             id: this.id,
             name: this.name,
+            room: this.room,
             rtcSupported: this.rtcSupported
         }
     }
