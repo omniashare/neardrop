@@ -53,6 +53,11 @@
                 <use xlink:href="#notifications" />
             </svg>
         </a>
+        <a href="#" id="room" class="icon-button" title="Create/Join a Room">
+            <svg class="icon">
+                <use xlink:href="#icon-md-room" />
+            </svg>
+        </a>
     </header>
     <!-- Peers -->
     <x-peers class="center"></x-peers>
@@ -60,7 +65,6 @@
         <h2>Open NearDrop.me on other devices to send files</h2>
     </x-no-peers>
     <x-instructions desktop="Click to send files or right click to send a message" mobile="Tap to send files or long tap to send a message"></x-instructions>
-    <div class="room">You can create or join a room</div>
     <!-- Footer -->
     <footer class="column">
         <svg class="icon logo">
@@ -218,7 +222,7 @@
         <symbol id="icon-theme" viewBox="0 0 24 24">
          <rect fill="none" height="24" width="24"/><path d="M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36c-0.98,1.37-2.58,2.26-4.4,2.26 c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"/>
         </symbol>
-        <symbol id="icon-edit-fill" viewBox="0 0 1024 1024"><path d="M880 836H144c-17.7 0-32 14.3-32 32v36c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-36c0-17.7-14.3-32-32-32zM257.7 752c2 0 4-0.2 6-0.5L431.9 722c2-0.4 3.9-1.3 5.3-2.8l423.9-423.9c3.9-3.9 3.9-10.2 0-14.1L694.9 114.9c-1.9-1.9-4.4-2.9-7.1-2.9s-5.2 1-7.1 2.9L256.8 538.8c-1.5 1.5-2.4 3.3-2.8 5.3l-29.5 168.2c-1.9 11.1 1.5 21.9 9.4 29.8 6.6 6.4 14.9 9.9 23.8 9.9z" fill="#1296db" ></path></symbol>
+        <symbol id="icon-md-room" viewBox="0 0 1036 1024"><path d="M900.26860667 505.82019042L536.63095507 142.44738769a28.18876027 28.18876027 0 0 0-39.90391334 1e-8L133.08939013 505.82019042c-10.59395948 10.59395948-16.59720262 24.98408715-16.59720263 39.99219656 0 31.16389673 25.33721924 56.50111596 56.50111596 56.50111596h38.31481934V861.60065603c0 15.62608958 12.62446801 28.25055836 28.25055836 28.25055758H460.17788282V692.09730737h98.87695313v197.75390625h234.74448046c15.62608958 0 28.25055836-12.62446801 28.25055836-28.25055759V602.31350294h38.31481934c15.00810863 0 29.39823707-5.9149607 39.99219577-16.5972034 21.98246558-22.0707488 21.98246558-57.82536109-0.08828321-79.89610911z" fill="#333333" ></path></symbol>
     </svg>
     <!-- Scripts -->
     <script src="scripts/network.js"></script>
