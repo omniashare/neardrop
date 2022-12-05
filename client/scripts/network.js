@@ -15,8 +15,10 @@ class ServerConnection {
         if (this._isConnected() || this._isConnecting()) return;
        // const ws = new WebSocket(this._endpoint());
         const lastDisplayName = localStorage.getItem('displayname')
-       // const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room=') : new WebSocket(this._endpoint()+'?room=')
-        const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc')
+        const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
+        Events.fire('room-display',roomid)
+        const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
+        //const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc?room='+roomid)
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);

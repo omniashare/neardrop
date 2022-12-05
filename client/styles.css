@@ -754,3 +754,28 @@ x-dialog x-paper {
         overflow: hidden;
     }
 }
+input::-webkit-outer-spin-button,
+
+input::-webkit-inner-spin-button {
+
+-webkit-appearance: none;
+
+}
+
+input[type="number"]{
+
+-moz-appearance: textfield;
+
+}
+
+#roomNumberInput {
+    width: 100%;
+    text-align :center;
+    font-size: 18px;
+    color: var(--primary-color);
+    font-weight: bold;
+    letter-spacing: 5px;
+}
+#exitRoomBt {
+    display: none;
+}

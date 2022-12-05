@@ -12,14 +12,36 @@ Events.on('display-name', e => {
     $displayName.textContent = 'You are known as ' + me.displayName;
     $displayName.title = me.deviceName;
 });
+Events.on('room-display',e => {
+    const room = e.detail
+    if(room) {
+        const $displayRoom = $('diaplayRoom')
+        $displayRoom.textContent = "Room:"+room
+        document.getElementById('exitRoomBt').style.display = 'block'
+        $("body-text-area").innerText = "room"
+    }else{
+        document.getElementById('exitRoomBt').style.display = 'none'
+        $("body-text-area").innerText = "network"
+    }
+    
+})
 Events.on('edit-name-commit',e => {
     const name = e.detail.text
     const $displayName = $('displayName')
     $displayName.textContent = 'You are known as ' + name
     Events.fire('peer-name',name)
 })
+//编辑显示的姓名
 $('editNameBt').addEventListener('click',e => {
     Events.fire('edit-name')
+})
+//加入房间
+$('room').addEventListener("click",e => {
+    Events.fire('open-room-dialog')
+})
+//退出房间
+$('exitRoomBt').addEventListener("click",e => {
+    Events.fire('exit-room')
 })
 
 class PeersUI {
@@ -349,6 +371,48 @@ class EditNameDialog extends Dialog {
         });
     }
 }
+class JoinRoomDialog extends Dialog {
+    constructor() {
+        super('roomDialog')
+        this.$number = document.getElementById("roomNumberInput")
+        Events.on('open-room-dialog', e => this._onOpenRoomDialog())
+        Events.on('exit-room', e => this._exitRoom())
+        const button = this.$el.querySelector('form')
+        button.addEventListener('submit', e => {
+            this._sure(e)
+        });
+    }
+    _onOpenRoomDialog() {
+        this.show()
+        this.$number.innerHTML = ""
+    }
+    _sure(e) {
+        e.preventDefault();
+        let number = this.$number.value.replace(/\D/g,'')
+        if(number.length < 6) {
+            let roomNumber = this._getRandomSixDigit()
+            localStorage.setItem('roomnumber',roomNumber)
+            location.reload()
+        }else{
+            //join
+            number = number.substring(0,6)
+            localStorage.setItem('roomnumber',number)
+            location.reload()
+        }
+    }
+    _exitRoom() {
+        localStorage.setItem('roomnumber','')
+        location.reload()
+    }
+    _getRandomSixDigit() {
+        let code = ''
+        for(var i=0;i<6;i++){
+            code += parseInt(Math.random()*10)
+        }
+
+        return code
+    }
+}
 class SendTextDialog extends Dialog {
     constructor() {
         super('sendTextDialog');
@@ -575,6 +639,7 @@ class Snapdrop {
             const sendTextDialog = new SendTextDialog();
             const editNameDialog = new EditNameDialog();
             const receiveTextDialog = new ReceiveTextDialog();
+            const roomDialog = new JoinRoomDialog()
             const toast = new Toast();
             const notifications = new Notifications();
             const networkStatusUI = new NetworkStatusUI();
@@ -600,6 +665,7 @@ window.addEventListener('beforeinstallprompt', e => {
         // don't display install banner when installed
         return e.preventDefault();
     } else {
+        return
         const btn = document.querySelector('#install')
         btn.hidden = false;
         btn.onclick = _ => e.prompt();
