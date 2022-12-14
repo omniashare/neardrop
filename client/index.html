@@ -154,6 +154,7 @@
             <x-background class="full center">
                 <x-paper shadow="2">
                     <h3>Room Number(6 Digits)</h3>
+                    <div class="room-tip">Note: No need to input to create a room.</div>
                     <input id="roomNumberInput"  class="textarea"  maxlength="6" oninput="value=value.replace(/\D/g,'');let btn=$('roomDialog').querySelector('button')" autocomplete="off" autofocus contenteditable />
                     <div class="row-reverse">
                         <button class="button" type="submit" close>Sure</button>

@@ -779,3 +779,6 @@ input[type="number"]{
 #exitRoomBt {
     display: none;
 }
+.room-tip {
+    color:#3c3c3c
+}
