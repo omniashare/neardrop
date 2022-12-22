@@ -160,9 +160,9 @@
                 <x-paper shadow="2">
                     <h3 data-lang="room_dialog_title">Room Number(6 Digits)</h3>
                     <div class="room-tip" data-lang="room_dialog_note" >Note: No need to input to create a room.</div>
-                    <input id="roomNumberInput"  class="textarea"  maxlength="6" oninput="value=value.replace(/\D/g,'');let btn=$('roomDialog').querySelector('button')" autocomplete="off" autofocus contenteditable />
+                    <input id="roomNumberInput"  class="textarea"  maxlength="6" oninput="value=value.replace(/\D/g,'');let btn=$('roomDialog').querySelector('button');if(value.length==6){btn.textContent=jQuery.i18n.prop('button_join');}else{btn.textContent=jQuery.i18n.prop('button_create');}" autocomplete="off" autofocus contenteditable />
                     <div class="row-reverse">
-                        <button class="button" type="submit" close data-lang="button_sure">Sure</button>
+                        <button class="button" type="submit" close data-lang="button_create" >Create</button>
                         <a class="button" close data-lang="button_cancel">Cancel</a>
                     </div>
                 </x-paper>
