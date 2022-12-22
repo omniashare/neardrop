@@ -38,22 +38,27 @@
 
 <body translate="no">
     <header class="row-reverse">
-        <a href="#about" class="icon-button" title="About NearDrop.me">
+        <a href="#about" class="icon-button" title="About NearDrop.me" data-title="about_title">
             <svg class="icon">
                 <use xlink:href="#info-outline" />
             </svg>
         </a>
-        <a href="#" id="theme" class="icon-button" title="Switch Darkmode/Lightmode" >
+        <a href="#" id="theme" class="icon-button" title="Switch Darkmode/Lightmode" data-title="theme_title">
             <svg class="icon">
                 <use xlink:href="#icon-theme" />
             </svg>
         </a>
-        <a href="#" id="notification" class="icon-button" title="Enable Notifications" hidden>
+        <a href="#" id="language" class="icon-button" title="Switch EN/Zh" data-title="language_title">
+            <svg class="icon">
+                <use xlink:href="#icon-language" />
+            </svg>
+        </a>
+        <a href="#" id="notification" class="icon-button" title="Enable Notifications" data-title="notification_title" hidden>
             <svg class="icon">
                 <use xlink:href="#notifications" />
             </svg>
         </a>
-        <a href="#" id="room" class="icon-button" title="Create/Join a Room">
+        <a href="#" id="room" class="icon-button" title="Create/Join a Room" data-title="room_title">
             <svg class="icon">
                 <use xlink:href="#icon-md-room" />
             </svg>
@@ -62,45 +67,45 @@
     <!-- Peers -->
     <x-peers class="center"></x-peers>
     <x-no-peers>
-        <h2>Open NearDrop.me on other devices to send files</h2>
+        <h2 data-lang= "home_slogan">Open NearDrop.me on other devices to send files</h2>
     </x-no-peers>
-    <x-instructions desktop="Click to send files or right click to send a message" mobile="Tap to send files or long tap to send a message"></x-instructions>
+    <x-instructions id="instructions" desktop="Click to send files or right click to send a message" mobile="Tap to send files or long tap to send a message"></x-instructions>
     <!-- Footer -->
     <footer class="column">
         <svg class="icon logo">
             <use xlink:href="#wifi-tethering" />
         </svg>
         <div >
-            <span id="displayName" placeholder="The easiest way to transfer data across devices"></span>
-            <svg class="icon edit-name" style="cursor: pointer;vertical-align: middle" id="editNameBt" title="Edit">
+            <span id="displayName" data-placeholder="about_subheading" placeholder="The easiest way to transfer data across devices"></span>
+            <svg class="icon edit-name" style="cursor: pointer;vertical-align: middle" id="editNameBt"  >
                 <use xlink:href="#icon-edit-fill"></use>
             </svg>
         </div>
         <div>
             <span id="diaplayRoom"></span>
-            <svg class="icon exit-room" style="cursor: pointer;vertical-align: middle;float:right" id="exitRoomBt" title="Exit">
+            <svg class="icon exit-room" style="cursor: pointer;vertical-align: middle;float:right" id="exitRoomBt" title="Exit" data-title="exit_title">
                 <use xlink:href="#icon-tuichu"></use>
             </svg>
         </div>
-        <div class="font-body2">You can be discovered by everyone on this <span id="body-text-area">network</span></div>
+        <div class="font-body2" > <span id="body-text-area">network</span></div>
     </footer>
     <!-- Receive Dialog -->
     <x-dialog id="receiveDialog">
         <x-background class="full center">
             <x-paper shadow="2">
-                <h3>File Received</h3>
-                <div class="font-subheading" id="fileName">Filename</div>
+                <h3 data-lang="receive_dialog_title">File Received</h3>
+                <div class="font-subheading" id="fileName" data-lang="file_name">Filename</div>
                 <div class="font-body2" id="fileSize"></div>
                 <div class='preview' style="visibility: hidden;">
                     <img id='img-preview' src="">
                 </div>
                 <div class="row">
-                    <label for="autoDownload" class="grow">Ask to save each file before downloading</label>
+                    <label for="autoDownload" class="grow" data-lang="text_download_ask">Ask to save each file before downloading</label>
                     <input type="checkbox" id="autoDownload" checked="">
                 </div>
                 <div class="row-reverse">
-                    <a class="button" close id="download" title="Download File" autofocus>Save</a>
-                    <button class="button" close>Ignore</button>
+                    <a class="button" close id="download" title="Download File" autofocus data-lang="button_save">Save</a>
+                    <button class="button" close data-lang="button_ignore">Ignore</button>
                 </div>
             </x-paper>
         </x-background>
@@ -110,11 +115,11 @@
         <form action="#">
             <x-background class="full center">
                 <x-paper shadow="2">
-                    <h3>Send a Message</h3>
-                    <div id="textInput" class="textarea" role="textbox" placeholder="Send a message" autocomplete="off" autofocus contenteditable></div>
+                    <h3 data-lang="send_meaasge_dialog_title">Send a Message</h3>
+                    <div id="textInput" class="textarea" role="textbox" data-placeholder="send_meaasge_dialog_title" autocomplete="off" autofocus contenteditable></div>
                     <div class="row-reverse">
-                        <button class="button" type="submit" close>Send</button>
-                        <a class="button" close>Cancel</a>
+                        <button class="button" type="submit" close data-lang="button_send">Send</button>
+                        <a class="button" close data-lang="button_cancel">Cancel</a>
                     </div>
                 </x-paper>
             </x-background>
@@ -124,11 +129,11 @@
     <x-dialog id="receiveTextDialog">
         <x-background class="full center">
             <x-paper shadow="2">
-                <h3>Message Received</h3>
+                <h3 data-lang="receive_text_dialog_title">Message Received</h3>
                 <div class="font-subheading" id="text"></div>
                 <div class="row-reverse">
-                    <button class="button" id="copy" close autofocus>Copy</button>
-                    <button class="button" close>Close</button>
+                    <button class="button" id="copy" close autofocus data-lang="button_copy">Copy</button>
+                    <button class="button" close data-lang="button_close">Close</button>
                 </div>
             </x-paper>
         </x-background>
@@ -138,11 +143,11 @@
         <form action="#">
             <x-background class="full center">
                 <x-paper shadow="2">
-                    <h3>You are known as</h3>
-                    <div id="nameTextInput" class="textarea" role="textbox" placeholder="Edit display name" autocomplete="off" autofocus contenteditable></div>
+                    <h3 data-lang="edit_name_dialog_title">You are known as</h3>
+                    <div id="nameTextInput" class="textarea" role="textbox" data-placeholder="edit_nameplaceholder" autocomplete="off" autofocus contenteditable></div>
                     <div class="row-reverse">
-                        <button class="button" type="submit" close>Sure</button>
-                        <a class="button" close>Cancel</a>
+                        <button class="button" type="submit" close data-lang="button_sure">Sure</button>
+                        <a class="button" close data-lang="button_cancel">Cancel</a>
                     </div>
                 </x-paper>
             </x-background>
@@ -153,12 +158,12 @@
         <form action="#">
             <x-background class="full center">
                 <x-paper shadow="2">
-                    <h3>Room Number(6 Digits)</h3>
-                    <div class="room-tip">Note: No need to input to create a room.</div>
-                    <input id="roomNumberInput"  class="textarea"  maxlength="6" oninput="value=value.replace(/\D/g,'');let btn=$('roomDialog').querySelector('button')" autocomplete="off" autofocus contenteditable />
+                    <h3 data-lang="room_dialog_title">Room Number(6 Digits)</h3>
+                    <div class="room-tip" data-lang="room_dialog_note" >Note: No need to input to create a room.</div>
+                    <input id="roomNumberInput"  class="textarea"  maxlength="6" oninput="value=value.replace(/\D/g,'');let btn=$('roomDialog').querySelector('button');if(value.length==6){btn.textContent=jQuery.i18n.prop('button_join');}else{btn.textContent=jQuery.i18n.prop('button_create');}" autocomplete="off" autofocus contenteditable />
                     <div class="row-reverse">
-                        <button class="button" type="submit" close>Sure</button>
-                        <a class="button" close>Cancel</a>
+                        <button class="button" type="submit" close data-lang="button_create" >Create</button>
+                        <a class="button" close data-lang="button_cancel">Cancel</a>
                     </div>
                 </x-paper>
             </x-background>
@@ -166,7 +171,7 @@
     </x-dialog>
     <!-- Toast -->
     <div class="toast-container full center">
-        <x-toast class="row" shadow="1" id="toast">File Transfer Completed</x-toast>
+        <x-toast class="row" shadow="1" id="toast" data-lang="transfer_completed_toast">File Transfer Completed</x-toast>
     </div>
     <!-- About Page -->
     <x-about id="about" class="full center column">
@@ -182,15 +187,15 @@
                 <use xlink:href="#wifi-tethering" />
             </svg>
             <h1>NearDrop.me</h1>
-            <div class="font-subheading">The easiest way to transfer files across devices</div>
+            <div class="font-subheading" data-lang="about_subheading">The easiest way to transfer files across devices</div>
             <div class="row">
-                <a class="icon-button" target="_blank" href="https://github.com/omniashare/snapdrop" title="Neardrop.me on Github" rel="noreferrer">
+                <a class="icon-button" target="_blank" href="https://github.com/omniashare/snapdrop" title="Neardrop.me on Github" rel="noreferrer" data-title="about_github_title">
                     <svg class="icon">
                         <use xlink:href="#github" />
                     </svg>
                 </a>
                
-                <a class="icon-button" target="_blank" href="https://github.com/omniashare/snapdrop/blob/master/docs/faq.md" title="Frequently asked questions" rel="noreferrer">
+                <a class="icon-button" target="_blank" href="https://github.com/omniashare/snapdrop/blob/master/docs/faq.md" title="Frequently asked questions" rel="noreferrer" data-title="about_help_title">
                     <svg class="icon">
                         <use xlink:href="#help-outline" />
                     </svg>
@@ -246,9 +251,12 @@
         <symbol id="icon-edit-fill" viewBox="0 0 1024 1024"><path d="M880 836H144c-17.7 0-32 14.3-32 32v36c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-36c0-17.7-14.3-32-32-32zM257.7 752c2 0 4-0.2 6-0.5L431.9 722c2-0.4 3.9-1.3 5.3-2.8l423.9-423.9c3.9-3.9 3.9-10.2 0-14.1L694.9 114.9c-1.9-1.9-4.4-2.9-7.1-2.9s-5.2 1-7.1 2.9L256.8 538.8c-1.5 1.5-2.4 3.3-2.8 5.3l-29.5 168.2c-1.9 11.1 1.5 21.9 9.4 29.8 6.6 6.4 14.9 9.9 23.8 9.9z" fill="#1296db" ></path></symbol>
         <symbol id="icon-md-room" viewBox="0 0 1036 1024"><path d="M900.26860667 505.82019042L536.63095507 142.44738769a28.18876027 28.18876027 0 0 0-39.90391334 1e-8L133.08939013 505.82019042c-10.59395948 10.59395948-16.59720262 24.98408715-16.59720263 39.99219656 0 31.16389673 25.33721924 56.50111596 56.50111596 56.50111596h38.31481934V861.60065603c0 15.62608958 12.62446801 28.25055836 28.25055836 28.25055758H460.17788282V692.09730737h98.87695313v197.75390625h234.74448046c15.62608958 0 28.25055836-12.62446801 28.25055836-28.25055759V602.31350294h38.31481934c15.00810863 0 29.39823707-5.9149607 39.99219577-16.5972034 21.98246558-22.0707488 21.98246558-57.82536109-0.08828321-79.89610911z" fill="#333333" ></path></symbol>
         <symbol id="icon-tuichu" viewBox="0 0 1024 1024"><path d="M851.68650881 493.62450928L736.34603779 349.44733963c-5.57920546-6.97361152-13.93141353-10.82324741-22.52313789-10.82324742-3.19116637 0-6.41158102 0.53199277-9.53950862 1.62759731-11.55444171 4.05278941-19.28928526 14.96378008-19.28928526 27.20910133l0 86.50772437-230.68568504 0c-31.85079801 0-57.67023551 25.8194375-57.67023551 57.67023552 0 31.85158825 25.8194375 57.67023551 57.67023551 57.67023551l230.68568504 0 0 86.50772437c0 12.24532047 7.73484354 23.15710216 19.28928526 27.20910132 3.12792838 1.10034754 6.34834224 1.62838832 9.53950862 1.62838833 8.59251382 0 16.94393166-3.8456839 22.52313789-10.82482867l115.33968077-144.1779599C860.11302213 519.12301227 860.11302213 504.15844196 851.68650881 493.62450928L851.68650881 493.62450928zM569.64889277 742.32364553L396.63897648 742.32364553l-57.6702355 1e-8 0-0.008695c-0.15414377 0-0.30433477 0.00869499-0.45373554 0.008695-31.59942499 0-57.22203323-25.8194375-57.22203323-57.67023551l0-57.67023552 0-230.68568504 0-57.6702355 0.00869499 0c0-0.15414377-0.00869499-0.30433477-0.00869499-0.45373554 0-31.59942499 25.82339027-57.22203323 57.67576877-57.22203322l57.6702355 0 173.00991629 0c31.85158825 0 57.67576876-25.81785701 57.67576875-57.67023551 0-31.85079801-25.82339027-57.67023551-57.67576875-57.67023551L281.29297221 165.61101418c-63.69764325 0-115.33968078 51.64282778-115.33968078 115.33968078l0 461.37137008c0 63.7031765 51.64282778 115.33968078 115.33968078 115.33968078l288.35513031 0c31.85158825 0 57.67576876-25.81785701 57.67576876-57.67023551C627.32387128 768.1422928 601.50048101 742.32364553 569.64889277 742.32364553L569.64889277 742.32364553zM569.64889277 742.32364553" fill="#1296db" ></path></symbol>
-    </svg>
+        <symbol id="icon-language" viewBox="0 0 1024 1024"><path d="M128 153.770667h42.666667V153.6h132.266666V85.333333h76.8v68.266667H512v0.085333h38.4V405.333333h-76.8v-25.6H379.733333V512H302.933333V379.733333H213.333333v25.6H128V153.770667zM302.933333 302.933333V230.4H213.333333v72.533333h89.6z m170.666667 0V230.4H379.733333v72.533333h93.866667z"></path><path d="M413.866667 938.709333V563.2h230.4V640h-153.6v72.533333h153.6v76.8h-153.6v72.533334h153.6V938.666667l-230.4 0.042666zM669.866667 563.285333v375.082667h76.8v-216.746667l110.677333 216.746667H938.666667v-375.082667h-76.8v217.002667l-110.677334-217.002667H669.866667zM170.666667 682.666667a42.666667 42.666667 0 1 0-85.333334 0v42.666666a170.666667 170.666667 0 0 0 170.666667 170.666667h42.666667a42.666667 42.666667 0 1 0 0-85.333333H256a85.333333 85.333333 0 0 1-85.333333-85.333334v-42.666666zM853.333333 384a42.666667 42.666667 0 0 1-42.666666-42.666667V298.666667a85.333333 85.333333 0 0 0-85.333334-85.333334h-42.666666a42.666667 42.666667 0 1 1 0-85.333333h42.666666a170.666667 170.666667 0 0 1 170.666667 170.666667v42.666666a42.666667 42.666667 0 0 1-42.666667 42.666667z"></path></symbol>    </svg>
     
     <!-- Scripts -->
+    <script src="https://cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/jquery-i18n-properties/jquery-i18n-properties/jquery.i18n.properties.min.js"></script>
+    <script src="scripts/language.js"></script>
     <script src="scripts/network.js"></script>
     <script src="scripts/ui.js"></script>
     <script src="scripts/theme.js" async></script>
@@ -261,8 +269,8 @@
     <!-- no script -->
     <noscript>
         <x-noscript class="full center column">
-            <h1>Enable JavaScript</h1>
-            <h3>Neardrop.me works only with JavaScript</h3>
+            <h1 data-lang="no_script_text1">Enable JavaScript</h1>
+            <h3 data-lang="no_script_text2">Neardrop.me works only with JavaScript</h3>
         </x-noscript>
         <style>
         x-noscript {

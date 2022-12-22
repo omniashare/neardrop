@@ -17,8 +17,8 @@ class ServerConnection {
         const lastDisplayName = localStorage.getItem('displayname')
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
-        const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-        //const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc?room='+roomid)
+        //const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
+        const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc?room='+roomid)
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);
@@ -78,7 +78,7 @@ class ServerConnection {
 
     _onDisconnect() {
         console.log('WS: server disconnected');
-        Events.fire('notify-user', 'Connection lost. Retry in 5 seconds...');
+        Events.fire('notify-user', jQuery.i18n.prop('notify_connection_lost'));
         clearTimeout(this._reconnectTimer);
         this._reconnectTimer = setTimeout(_ => this._connect(), 5000);
     }
@@ -220,7 +220,7 @@ class Peer {
         this._reader = null;
         this._busy = false;
         this._dequeueFile();
-        Events.fire('notify-user', 'File transfer completed.');
+        Events.fire('notify-user', jQuery.i18n.prop('transfer_completed_toast'));
     }
 
     sendText(text) {
