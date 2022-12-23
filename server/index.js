@@ -12,9 +12,70 @@ process.on('SIGTERM', () => {
 })
 
 const parser = require('ua-parser-js');
-const { uniqueNamesGenerator, animals, colors } = require('unique-names-generator');
+const { uniqueNamesGenerator } = require('unique-names-generator');
 
-const plants = [
+const PREFIXES = [
+    'adventurous',
+    'affable',
+    'ambitious',
+    'amiable ',
+    'amusing',
+    'brave',
+    'bright',
+    'charming',
+    'compassionate',
+    'convivial',
+    'courageous',
+    'creative',
+    'diligent',
+    'easygoing',
+    'emotional',
+    'energetic',
+    'enthusiastic',
+    'exuberant',
+    'fearless',
+    'friendly',
+    'funny',
+    'generous',
+    'gentle',
+    'good',
+    'helpful',
+    'honest',
+    'humorous',
+    'imaginative',
+    'independent',
+    'intelligent',
+    'intuitive',
+    'inventive',
+    'kind',
+    'loving',
+    'loyal',
+    'modest',
+    'neat',
+    'nice',
+    'optimistic',
+    'passionate',
+    'patient',
+    'persistent',
+    'polite',
+    'practical',
+    'rational',
+    'reliable',
+    'reserved',
+    'resourceful',
+    'romantic',
+    'sensible',
+    'sensitive',
+    'sincere',
+    'sympathetic',
+    'thoughtful',
+    'tough',
+    'understanding',
+    'versatile',
+    'warmhearted',
+];
+
+const PLANTS = [
     "apple",
     "watermelon",
     "orange",
@@ -330,7 +391,7 @@ class Peer {
         uniqueNamesGenerator({
             length: 2,
             separator: ' ',
-            dictionaries: [colors, plants],
+            dictionaries: [PREFIXES, PLANTS],
             style: 'capital',
             seed: this.id.hashCode()
         })
