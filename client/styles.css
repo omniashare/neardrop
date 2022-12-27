@@ -225,7 +225,6 @@ x-peer label {
 x-peer .name {
     width: var(--peer-width);
     white-space: nowrap;
-    overflow: hidden;
     text-overflow: ellipsis;
     text-align: center;
 }
