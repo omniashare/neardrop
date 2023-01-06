@@ -224,9 +224,13 @@ x-peer label {
 
 x-peer .name {
     width: var(--peer-width);
+    /*
     white-space: nowrap;
+    */
     text-overflow: ellipsis;
     text-align: center;
+    overflow: hidden;
+    word-break: break-word;
 }
 
 input[type="file"] {
