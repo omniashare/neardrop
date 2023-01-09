@@ -817,3 +817,6 @@ input[type="number"]{
 .dark-theme .room-icon {
     background-image: url('./images/icons/create_dark.png');
 }
+.sender-h4 {
+    color: var(--primary-color)
+}

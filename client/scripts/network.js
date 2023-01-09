@@ -17,8 +17,8 @@ class ServerConnection {
         const lastDisplayName = localStorage.getItem('displayname')
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
-        const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-        //const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc?room='+roomid)
+       // const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
+        const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc?room='+roomid)
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);
@@ -99,9 +99,10 @@ class ServerConnection {
 
 class Peer {
 
-    constructor(serverConnection, peerId) {
+    constructor(serverConnection, peerId, peerDisplayname) {
         this._server = serverConnection;
         this._peerId = peerId;
+        this._peerDisplayname = peerDisplayname
         this._filesQueue = [];
         this._busy = false;
     }
@@ -110,27 +111,28 @@ class Peer {
         this._send(JSON.stringify(message));
     }
 
-    sendFiles(files) {
+    sendFiles(files,sender) {
         for (let i = 0; i < files.length; i++) {
             this._filesQueue.push(files[i]);
         }
         if (this._busy) return;
-        this._dequeueFile();
+        this._dequeueFile(sender);
     }
 
-    _dequeueFile() {
+    _dequeueFile(sender) {
         if (!this._filesQueue.length) return;
         this._busy = true;
         const file = this._filesQueue.shift();
-        this._sendFile(file);
+        this._sendFile(file,sender);
     }
 
-    _sendFile(file) {
+    _sendFile(file,sender) {
         this.sendJSON({
             type: 'header',
             name: file.name,
             mime: file.type,
-            size: file.size
+            size: file.size,
+            sender: sender
         });
         this._chunker = new FileChunker(file,
             chunk => this._send(chunk),
@@ -160,7 +162,12 @@ class Peer {
             this._onChunkReceived(message);
             return;
         }
+        let sender = ''
+        
         message = JSON.parse(message);
+        if(message.sender){
+            sender = message.sender
+        }
         console.log('RTC:', message);
         switch (message.type) {
             case 'header':
@@ -179,7 +186,7 @@ class Peer {
                 this._onTransferCompleted();
                 break;
             case 'text':
-                this._onTextReceived(message);
+                this._onTextReceived(message,sender);
                 break;
         }
     }
@@ -190,7 +197,7 @@ class Peer {
             name: header.name,
             mime: header.mime,
             size: header.size
-        }, file => this._onFileReceived(file));
+        }, file => this._onFileReceived(file,header.sender));
     }
 
     _onChunkReceived(chunk) {
@@ -210,8 +217,8 @@ class Peer {
         Events.fire('file-progress', { sender: this._peerId, progress: progress });
     }
 
-    _onFileReceived(proxyFile) {
-        Events.fire('file-received', proxyFile);
+    _onFileReceived(proxyFile,sender) {
+        Events.fire('file-received', {file:proxyFile, sender:sender});
         this.sendJSON({ type: 'transfer-complete' });
     }
 
@@ -223,21 +230,23 @@ class Peer {
         Events.fire('notify-user', jQuery.i18n.prop('transfer_completed_toast'));
     }
 
-    sendText(text) {
+    sendText(text,sender) {
         const unescaped = btoa(unescape(encodeURIComponent(text)));
-        this.sendJSON({ type: 'text', text: unescaped });
+        const unescapedSender = btoa(unescape(encodeURIComponent(sender)));
+        this.sendJSON({ type: 'text', text: unescaped, sender: unescapedSender});
     }
 
-    _onTextReceived(message) {
+    _onTextReceived(message,sender) {
         const escaped = decodeURIComponent(escape(atob(message.text)));
-        Events.fire('text-received', { text: escaped, sender: this._peerId });
+        const escapedSender = decodeURIComponent(escape(atob(sender)));
+        Events.fire('text-received', { text: escaped, sender: escapedSender });
     }
 }
 
 class RTCPeer extends Peer {
 
-    constructor(serverConnection, peerId) {
-        super(serverConnection, peerId);
+    constructor(serverConnection, peerId, peerDisplayname) {
+        super(serverConnection, peerId, peerDisplayname);
         if (!peerId) return; // we will listen for a caller
         this._connect(peerId, true);
     }
@@ -397,7 +406,7 @@ class PeersManager {
                 this._onPeerLeft(peer.id)
             }
             if (window.isRtcSupported && peer.rtcSupported) {
-                this.peers[peer.id] = new RTCPeer(this._server, peer.id);
+                this.peers[peer.id] = new RTCPeer(this._server, peer.id, peer.name.displayName);
             } else {
                 this.peers[peer.id] = new WSPeer(this._server, peer.id);
             }
@@ -409,11 +418,11 @@ class PeersManager {
     }
 
     _onFilesSelected(message) {
-        this.peers[message.to].sendFiles(message.files);
+        this.peers[message.to].sendFiles(message.files,message.sender);
     }
 
     _onSendText(message) {
-        this.peers[message.to].sendText(message.text);
+        this.peers[message.to].sendText(message.text,message.from);
     }
 
     _onPeerLeft(peerId) {

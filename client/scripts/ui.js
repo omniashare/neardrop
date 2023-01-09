@@ -9,7 +9,7 @@ window.iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 Events.on('display-name', e => {
     const me = e.detail.message;
     const $displayName = $('displayName')
-    $displayName.textContent = jQuery.i18n.prop('text_display_name',me.displayName)
+    $displayName.textContent = me.displayName
     $displayName.title = me.deviceName;
 });
 Events.on('room-display',e => {
@@ -107,7 +107,8 @@ class PeersUI {
         if (files.length > 0 && peers.length === 1) {
             Events.fire('files-selected', {
                 files: files,
-                to: $$('x-peer').id
+                to: $$('x-peer').id,
+                sender: $('displayName').innerText
             });
         }
     }
@@ -188,7 +189,8 @@ class PeerUI {
         const files = $input.files;
         Events.fire('files-selected', {
             files: files,
-            to: this._peer.id
+            to: this._peer.id,
+            sender: $('displayName').innerText
         });
         $input.value = null; // reset input
     }
@@ -215,7 +217,8 @@ class PeerUI {
         const files = e.dataTransfer.files;
         Events.fire('files-selected', {
             files: files,
-            to: this._peer.id
+            to: this._peer.id,
+            sender: $('displayName').innerText
         });
         this._onDragEnd();
     }
@@ -273,18 +276,18 @@ class ReceiveDialog extends Dialog {
     constructor() {
         super('receiveDialog');
         Events.on('file-received', e => {
-            this._nextFile(e.detail);
+            this._nextFile(e.detail.file, e.detail.sender);
             window.blop.play();
         });
         this._filesQueue = [];
     }
 
-    _nextFile(nextFile) {
+    _nextFile(nextFile,sender) {
         if (nextFile) this._filesQueue.push(nextFile);
         if (this._busy) return;
         this._busy = true;
         const file = this._filesQueue.shift();
-        this._displayFile(file);
+        this._displayFile(file,sender);
     }
 
     _dequeueFile() {
@@ -299,7 +302,7 @@ class ReceiveDialog extends Dialog {
         }, 300);
     }
 
-    _displayFile(file) {
+    _displayFile(file,sender) {
         const $a = this.$el.querySelector('#download');
         const url = URL.createObjectURL(file.blob);
         $a.href = url;
@@ -317,6 +320,7 @@ class ReceiveDialog extends Dialog {
 
         this.$el.querySelector('#fileName').textContent = file.name;
         this.$el.querySelector('#fileSize').textContent = this._formatFileSize(file.size);
+        $('fileSender').innerHTML = sender
         this.show();
 
         if (window.isDownloadSupported) return;
@@ -451,9 +455,11 @@ class SendTextDialog extends Dialog {
 
     _send(e) {
         e.preventDefault();
+        let displayName = $('displayName').innerText
         Events.fire('send-text', {
             to: this._recipient,
-            text: this.$text.innerText
+            text: this.$text.innerText,
+            from: displayName
         });
     }
 }
@@ -468,6 +474,7 @@ class ReceiveTextDialog extends Dialog {
     }
 
     _onText(e) {
+        $('sender').innerHTML = e.sender
         this.$text.innerHTML = '';
         const text = e.text;
         if (isURL(text)) {
@@ -516,7 +523,7 @@ class Notifications {
             this.$button.addEventListener('click', e => this._requestPermission());
         }
         Events.on('text-received', e => this._messageNotification(e.detail.text));
-        Events.on('file-received', e => this._downloadNotification(e.detail.name));
+        Events.on('file-received', e => this._downloadNotification(e.detail.file.name));
     }
 
     _requestPermission() {
