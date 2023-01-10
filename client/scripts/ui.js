@@ -28,7 +28,7 @@ Events.on('room-display',e => {
 Events.on('edit-name-commit',e => {
     const name = e.detail.text
     const $displayName = $('displayName')
-    $displayName.textContent = jQuery.i18n.prop('text_display_name',name)
+    $displayName.textContent = name
     Events.fire('peer-name',name)
 })
 //编辑显示的姓名
