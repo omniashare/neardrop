@@ -436,6 +436,7 @@ class SendTextDialog extends Dialog {
     _onRecipient(recipient) {
         this._recipient = recipient;
         this._handleShareTargetText();
+        this.$text.innerHTML = ''
         this.show();
 
         const range = document.createRange();
