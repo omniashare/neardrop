@@ -1,6 +1,6 @@
 {
-    "name": "Snapdrop",
-    "short_name": "Snapdrop",
+    "name": "Neardrop",
+    "short_name": "Neardrop",
     "icons": [{
         "src": "images/android-chrome-192x192.png",
         "sizes": "192x192",
