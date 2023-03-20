@@ -820,3 +820,6 @@ input[type="number"]{
 .sender-h4 {
     color: var(--primary-color)
 }
+#editNameBt {
+    float: right;
+}
