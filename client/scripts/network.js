@@ -18,7 +18,7 @@ class ServerConnection {
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
         const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-       // const ws = new WebSocket('ws://192.168.3.56:3000/server/webrtc?room='+roomid)
+        //const ws = new WebSocket('ws://192.168.3.82:3000/server/webrtc?room='+roomid)
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);
@@ -105,6 +105,7 @@ class Peer {
         this._peerDisplayname = peerDisplayname
         this._filesQueue = [];
         this._busy = false;
+        this._cancel = false
     }
 
     sendJSON(message) {
@@ -120,13 +121,17 @@ class Peer {
     }
 
     _dequeueFile(sender) {
-        if (!this._filesQueue.length) return;
-        this._busy = true;
+        if (!this._filesQueue.length && this._cancel) {
+            Events.fire('close-progress',{sender: this._peerId});
+            return
+        }
+        this._cancel = false
         const file = this._filesQueue.shift();
         this._sendFile(file,sender);
     }
 
     _sendFile(file,sender) {
+        if(!file) return
         this.sendJSON({
             type: 'header',
             name: file.name,
@@ -134,10 +139,17 @@ class Peer {
             size: file.size,
             sender: sender
         });
+        
         this._chunker = new FileChunker(file,
             chunk => this._send(chunk),
             offset => this._onPartitionEnd(offset));
         this._chunker.nextPartition();
+    }
+    //取消发送当前文件
+    cancelSend() {
+        this._cancel = true
+        this._busy = false;
+        this._dequeueFile();
     }
 
     _onPartitionEnd(offset) {
@@ -149,7 +161,7 @@ class Peer {
     }
 
     _sendNextPartition() {
-        if (!this._chunker || this._chunker.isFileEnd()) return;
+        if (!this._chunker || this._chunker.isFileEnd() || this._cancel) return;
         this._chunker.nextPartition();
     }
 
@@ -171,7 +183,7 @@ class Peer {
         console.log('RTC:', message);
         switch (message.type) {
             case 'header':
-                this._onFileHeader(message);
+                this._onFileHeader(message,sender);
                 break;
             case 'partition':
                 this._onReceivedPartitionEnd(message);
@@ -183,7 +195,7 @@ class Peer {
                 this._onDownloadProgress(message.progress);
                 break;
             case 'transfer-complete':
-                this._onTransferCompleted();
+                this._onTransferCompleted(sender);
                 break;
             case 'text':
                 this._onTextReceived(message,sender);
@@ -219,14 +231,14 @@ class Peer {
 
     _onFileReceived(proxyFile,sender) {
         Events.fire('file-received', {file:proxyFile, sender:sender});
-        this.sendJSON({ type: 'transfer-complete' });
+        this.sendJSON({ type: 'transfer-complete' ,sender: sender});
     }
 
-    _onTransferCompleted() {
+    _onTransferCompleted(sender) {
         this._onDownloadProgress(1);
         this._reader = null;
         this._busy = false;
-        this._dequeueFile();
+        this._dequeueFile(sender);
         Events.fire('notify-user', jQuery.i18n.prop('transfer_completed_toast'));
     }
 
@@ -387,6 +399,7 @@ class PeersManager {
         Events.on('send-text', e => this._onSendText(e.detail));
         Events.on('peer-left', e => this._onPeerLeft(e.detail));
         Events.on('peer-name',e => this._onModifyName(e.detail))
+        Events.on('cancel-send',e => this._onCancelSend(e.detail))
     }
 
     _onMessage(message) {
@@ -436,6 +449,11 @@ class PeersManager {
     _onModifyName(name) {
         const message = {displayName: name}
         this._server.send(message)
+    }
+
+    //取消发送
+    _onCancelSend(message) {
+        this.peers[message.to].cancelSend()
     }
 
 }

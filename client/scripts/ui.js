@@ -60,6 +60,7 @@ class PeersUI {
         Events.on('file-progress', e => this._onFileProgress(e.detail));
         Events.on('paste', e => this._onPaste(e));
         Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
+        Events.on('close-progress',e => this._closeProgress(e.detail))
     }
 
     _onPeerJoined(peer) {
@@ -89,6 +90,13 @@ class PeersUI {
         const $peer = $(peerId);
         if (!$peer) return;
         $peer.ui.setProgress(progress.progress);
+    }
+
+    _closeProgress(message){
+        const peerId = message.sender || message.recipient;
+        const $peer = $(peerId);
+        if (!$peer) return;
+        $peer.ui.closeProgress();
     }
 
     _clearPeers() {
@@ -130,6 +138,7 @@ class PeerUI {
                 <div class="name font-subheading"></div>
                 <div class="device-name font-body2"></div>
                 <div class="status font-body2"></div>
+                <button class="cancel-transfer" style="display:none">Cancel</button>
             </label>`
     }
 
@@ -137,6 +146,7 @@ class PeerUI {
         this._peer = peer;
         this._initDom();
         this._bindListeners(this.$el);
+        this._hasCancel = false
     }
 
     _initDom() {
@@ -160,6 +170,8 @@ class PeerUI {
         el.addEventListener('contextmenu', e => this._onRightClick(e));
         el.addEventListener('touchstart', e => this._onTouchStart(e));
         el.addEventListener('touchend', e => this._onTouchEnd(e));
+        //cancel transfer
+        el.querySelector('.cancel-transfer').addEventListener('click',e => this._cancelTransfer(e))
         // prevent browser's default file drop behavior
         Events.on('dragover', e => e.preventDefault());
         Events.on('drop', e => e.preventDefault());
@@ -185,6 +197,7 @@ class PeerUI {
     }
 
     _onFilesSelected(e) {
+        this._hasCancel = false
         const $input = e.target;
         const files = $input.files;
         Events.fire('files-selected', {
@@ -196,8 +209,10 @@ class PeerUI {
     }
 
     setProgress(progress) {
+        if(this._hasCancel) return
         if (progress > 0) {
             this.$el.setAttribute('transfer', '1');
+            this.$el.querySelector('.cancel-transfer').style.display = "block"
         }
         if (progress > 0.5) {
             this.$progress.classList.add('over50');
@@ -209,7 +224,14 @@ class PeerUI {
         if (progress >= 1) {
             this.setProgress(0);
             this.$el.removeAttribute('transfer');
+            this.$el.querySelector('.cancel-transfer').style.display = "none"
         }
+    }
+    closeProgress() {
+        this.setProgress(0);
+        this.$el.removeAttribute('transfer');
+        this.$el.querySelector('.cancel-transfer').style.display = "none"
+        this._hasCancel = true
     }
 
     _onDrop(e) {
@@ -248,6 +270,12 @@ class PeerUI {
             if (e) e.preventDefault();
             Events.fire('text-recipient', this._peer.id);
         }
+    }
+
+    _cancelTransfer(e) {
+        Events.fire('cancel-send', {
+            to: this._peer.id
+        });
     }
 }
 
@@ -290,7 +318,7 @@ class ReceiveDialog extends Dialog {
         this._displayFile(file,sender);
     }
 
-    _dequeueFile() {
+    _dequeueFile(file,sender) {
         if (!this._filesQueue.length) { // nothing to do
             this._busy = false;
             return;
@@ -298,11 +326,12 @@ class ReceiveDialog extends Dialog {
         // dequeue next file
         setTimeout(_ => {
             this._busy = false;
-            this._nextFile();
+            this._nextFile(undefined,sender);
         }, 300);
     }
 
     _displayFile(file,sender) {
+        console.log("sender",sender)
         const $a = this.$el.querySelector('#download');
         const url = URL.createObjectURL(file.blob);
         $a.href = url;

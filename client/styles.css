@@ -313,8 +313,12 @@ footer .logo {
     --icon-size: 80px;
     margin-bottom: 8px;
     color: var(--primary-color);
+    position: relative;
 }
-
+footer .logo .logo-icon {
+    width: 100%;
+    height: 100%
+}
 footer .font-body2 {
     color: var(--primary-color);
 }
@@ -823,3 +827,4 @@ input[type="number"]{
 #editNameBt {
     float: right;
 }
+
