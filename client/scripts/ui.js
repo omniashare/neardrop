@@ -61,6 +61,8 @@ class PeersUI {
         Events.on('paste', e => this._onPaste(e));
         Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
         Events.on('close-progress',e => this._closeProgress(e.detail))
+        Events.on('clear-cancel',e => this._clearCancel(e.detail))
+        
     }
 
     _onPeerJoined(peer) {
@@ -98,7 +100,12 @@ class PeersUI {
         if (!$peer) return;
         $peer.ui.closeProgress();
     }
-
+    _clearCancel(message) {
+        const peerId = message.sender || message.recipient;
+        const $peer = $(peerId);
+        if (!$peer) return;
+        $peer.ui.clearCancel();
+    }
     _clearPeers() {
         const $peers = $$('x-peers').innerHTML = '';
     }
@@ -197,9 +204,10 @@ class PeerUI {
     }
 
     _onFilesSelected(e) {
-        this._hasCancel = false
         const $input = e.target;
         const files = $input.files;
+        //展示cancel按钮
+        this.$el.querySelector('.cancel-transfer').style.display = "block"
         Events.fire('files-selected', {
             files: files,
             to: this._peer.id,
@@ -212,7 +220,6 @@ class PeerUI {
         if(this._hasCancel) return
         if (progress > 0) {
             this.$el.setAttribute('transfer', '1');
-            this.$el.querySelector('.cancel-transfer').style.display = "block"
         }
         if (progress > 0.5) {
             this.$progress.classList.add('over50');
@@ -226,6 +233,9 @@ class PeerUI {
             this.$el.removeAttribute('transfer');
             this.$el.querySelector('.cancel-transfer').style.display = "none"
         }
+    }
+    clearCancel() {
+        this._hasCancel = false
     }
     closeProgress() {
         this.setProgress(0);

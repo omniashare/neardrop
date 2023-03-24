@@ -29,7 +29,6 @@ class ServerConnection {
 
     _onMessage(msg) {
         msg = JSON.parse(msg);
-        console.log('WS:', msg);
         switch (msg.type) {
             case 'peers':
                 Events.fire('peers', msg.peers);
@@ -105,7 +104,7 @@ class Peer {
         this._peerDisplayname = peerDisplayname
         this._filesQueue = [];
         this._busy = false;
-        this._cancel = false
+        this._cancel = false;
     }
 
     sendJSON(message) {
@@ -123,13 +122,21 @@ class Peer {
     _dequeueFile(sender) {
         if (!this._filesQueue.length && this._cancel) {
             Events.fire('close-progress',{sender: this._peerId});
+            this._sendCancelFile(this._peerId)
             return
         }
+        Events.fire('clear-cancel', {sender: this._peerId});
         this._cancel = false
         const file = this._filesQueue.shift();
         this._sendFile(file,sender);
     }
-
+    //通知关闭传输
+    _sendCancelFile(sender) {
+        this.sendJSON({
+            type: 'cancel-send',
+            sender: sender
+        });
+    }
     _sendFile(file,sender) {
         if(!file) return
         this.sendJSON({
@@ -166,6 +173,7 @@ class Peer {
     }
 
     _sendProgress(progress) {
+        //接收方的进度
         this.sendJSON({ type: 'progress', progress: progress });
     }
 
@@ -180,7 +188,6 @@ class Peer {
         if(message.sender){
             sender = message.sender
         }
-        console.log('RTC:', message);
         switch (message.type) {
             case 'header':
                 this._onFileHeader(message,sender);
@@ -196,6 +203,9 @@ class Peer {
                 break;
             case 'transfer-complete':
                 this._onTransferCompleted(sender);
+                break;
+            case 'cancel-send':
+                Events.fire('close-progress', {recipient: this._peerId});
                 break;
             case 'text':
                 this._onTextReceived(message,sender);
@@ -231,6 +241,7 @@ class Peer {
 
     _onFileReceived(proxyFile,sender) {
         Events.fire('file-received', {file:proxyFile, sender:sender});
+        Events.fire('clear-cancel', {recipient: this._peerId});
         this.sendJSON({ type: 'transfer-complete' ,sender: sender});
     }
 
