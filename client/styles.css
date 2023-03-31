@@ -827,4 +827,7 @@ input[type="number"]{
 #editNameBt {
     float: right;
 }
+.about-logo {
+    width: 80px
+}
 

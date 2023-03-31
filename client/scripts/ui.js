@@ -62,7 +62,6 @@ class PeersUI {
         Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
         Events.on('close-progress',e => this._closeProgress(e.detail))
         Events.on('clear-cancel',e => this._clearCancel(e.detail))
-        
     }
 
     _onPeerJoined(peer) {
@@ -98,6 +97,7 @@ class PeersUI {
         const peerId = message.sender || message.recipient;
         const $peer = $(peerId);
         if (!$peer) return;
+       // Events.fire('notify-user', '文件传输被取消');
         $peer.ui.closeProgress();
     }
     _clearCancel(message) {
@@ -145,7 +145,7 @@ class PeerUI {
                 <div class="name font-subheading"></div>
                 <div class="device-name font-body2"></div>
                 <div class="status font-body2"></div>
-                <button class="cancel-transfer" style="display:none">Cancel</button>
+                <button class="cancel-transfer" style="display:none">${jQuery.i18n.prop('cancel_send')}</button>
             </label>`
     }
 
@@ -341,7 +341,6 @@ class ReceiveDialog extends Dialog {
     }
 
     _displayFile(file,sender) {
-        console.log("sender",sender)
         const $a = this.$el.querySelector('#download');
         const url = URL.createObjectURL(file.blob);
         $a.href = url;

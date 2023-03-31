@@ -125,6 +125,7 @@ class Peer {
             this._sendCancelFile(this._peerId)
             return
         }
+        this._sendClearCancel()
         Events.fire('clear-cancel', {sender: this._peerId});
         this._cancel = false
         const file = this._filesQueue.shift();
@@ -137,6 +138,12 @@ class Peer {
             sender: sender
         });
     }
+    //通知取消关闭传输
+    _sendClearCancel() {
+        this.sendJSON({
+            type: 'm-clear-cancel'       
+        });
+    }
     _sendFile(file,sender) {
         if(!file) return
         this.sendJSON({
@@ -146,10 +153,12 @@ class Peer {
             size: file.size,
             sender: sender
         });
-        
         this._chunker = new FileChunker(file,
-            chunk => this._send(chunk),
+            chunk => {
+                this._send(chunk)
+            },
             offset => this._onPartitionEnd(offset));
+        
         this._chunker.nextPartition();
     }
     //取消发送当前文件
@@ -206,6 +215,9 @@ class Peer {
                 break;
             case 'cancel-send':
                 Events.fire('close-progress', {recipient: this._peerId});
+                break;
+            case 'm-clear-cancel':
+                Events.fire('clear-cancel', {recipient: this._peerId});
                 break;
             case 'text':
                 this._onTextReceived(message,sender);
