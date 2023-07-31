@@ -18,7 +18,7 @@ class ServerConnection {
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
         const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-        //const ws = new WebSocket('ws://192.168.3.82:3000/server/webrtc?room='+roomid)
+      //  const ws = new WebSocket('ws://192.168.3.82:3000/server/webrtc?room='+roomid)
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);
@@ -31,7 +31,8 @@ class ServerConnection {
         msg = JSON.parse(msg);
         switch (msg.type) {
             case 'peers':
-                Events.fire('peers', msg.peers);
+              //  Events.fire('peers', msg.peers);
+              Events.fire('peers', msg);
                 break;
             case 'peer-joined':
                 Events.fire('peer-joined', msg.peer);
@@ -432,7 +433,8 @@ class PeersManager {
         this.peers[message.sender].onServerMessage(message);
     }
 
-    _onPeers(peers) {
+    _onPeers(msg) {
+        const peers = msg.peers;
         peers.forEach(peer => {
             if (this.peers[peer.id]) {
                 // this.peers[peer.id].refresh();

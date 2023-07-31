@@ -228,7 +228,6 @@ class SnapdropServer {
         if (!this._rooms[peer.ip]) {
             this._rooms[peer.ip] = {};
         }
-
         // notify all other peers
         for (const otherPeerId in this._rooms[peer.ip]) {
             if (otherPeerId === peer.id) continue;
@@ -245,10 +244,10 @@ class SnapdropServer {
             if (otherPeerId === peer.id) continue;
             otherPeers.push(this._rooms[peer.ip][otherPeerId].getInfo());
         }
-
         this._send(peer, {
             type: 'peers',
-            peers: otherPeers
+            peers: otherPeers,
+            currentPid: peer.id
         });
 
         // add peer to room

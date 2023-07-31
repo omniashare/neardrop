@@ -64,7 +64,8 @@ class PeersUI {
         Events.on('clear-cancel',e => this._clearCancel(e.detail))
     }
 
-    _onPeerJoined(peer) {
+    _onPeerJoined(peer,currentPid) {
+        if(peer.id === currentPid) return
         if ($(peer.id)) return; // peer already exists
         const peerUI = new PeerUI(peer);
         $$('x-peers').appendChild(peerUI.$el);
@@ -75,9 +76,13 @@ class PeersUI {
         let el = $(peer.id)      
         el.querySelector('.name').textContent = peer.name.displayName;
     }
-    _onPeers(peers) {
+    _onPeers(msg) {
+        console.log('ui onPeers----')
+        console.log(msg)
+        const currentPid = msg.currentPid
+        const peers = msg.peers
         this._clearPeers();
-        peers.forEach(peer => this._onPeerJoined(peer));
+        peers.forEach(peer => this._onPeerJoined(peer,currentPid));
     }
 
     _onPeerLeft(peerId) {
