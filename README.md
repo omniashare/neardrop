@@ -1,32 +1,16 @@
-# Snapdrop 
+# NearDrop.me
 
-[Snapdrop](https://snapdrop.net): local file sharing in your browser. Inspired by Apple's Airdrop.
+[NearDrop.me](https://neardrop.me): local and remote file sharing in your browser. Enhanced version of [SnapDrop] (https://snapdrop.net).
 
+## Additional Features
+This project is built on top of the open software [Snapdrop](https://github.com/RobinLinus/snapdrop).  While preserving most of the features of Snapdrop, the following features are added:
+* Add remote file sharing via user-created rooms
+* Allow users to change local device name
+* Allow cancellation of a time-consuming file transfer process
+* Enhance WebSocket connections to avoid ghost devices
 
-#### Snapdrop is built with the following awesome technologies:
-* Vanilla HTML5 / ES6 / CSS3 frontend
-* [WebRTC](http://webrtc.org/) / [WebSockets](http://www.websocket.org/)
-* [NodeJS](https://nodejs.org/en/) backend
-* [Progressive Web App](https://wikipedia.org/wiki/Progressive_Web_App)
-
-
-Have any questions? Read our [FAQ](/docs/faq.md).
-
-You can [host your own instance with Docker](/docs/local-dev.md).
-
-
-## Support the Snapdrop Community
-Snapdrop is free. Still, we have to pay for the server. If you want to contribute, please use PayPal:
-
-[<img src="https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif">](https://www.paypal.com/donate/?hosted_button_id=MG8GV7YCYT352)
-
-or Bitcoin:
-
-[<img src="https://coins.github.io/thx/logo-color-large-pill-320px.png" alt="CoinThx" width="200"/>](https://coins.github.io/thx/#1K9zQ8f4iTyhKyHWmiDKt21cYX2QSDckWB?label=Snapdrop&message=Thanks!%20Your%20contribution%20helps%20to%20keep%20Snapdrop%20free%20for%20everybody!) 
-
-Alternatively, you can become a [Github Sponsor](https://github.com/sponsors/RobinLinus).
-
-Thanks a lot for supporting free and open software!
+## Notes
+A free web server is used to provide local and remote file sharing. In case you find the file transfer process too slow, you can try sharing the files at a later time when the server is less busy. 
 
 
  
