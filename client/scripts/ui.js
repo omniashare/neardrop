@@ -77,8 +77,6 @@ class PeersUI {
         el.querySelector('.name').textContent = peer.name.displayName;
     }
     _onPeers(msg) {
-        console.log('ui onPeers----')
-        console.log(msg)
         const currentPid = msg.currentPid
         const peers = msg.peers
         this._clearPeers();
@@ -474,8 +472,19 @@ class SendTextDialog extends Dialog {
         this.$text = this.$el.querySelector('#textInput');
         const button = this.$el.querySelector('form');
         button.addEventListener('submit', e => this._send(e));
+        //绑定paste事件
+        this.$text.addEventListener('paste', e => this._onInputPaste(e))
     }
-
+    _onInputPaste(e) {
+        let clipboardData = e.clipboardData
+        const files = e.clipboardData.files || e.clipboardData.items
+        .filter(i => i.type.indexOf('image') > -1)
+        .map(i => i.getAsFile());
+        if(!files.length) {
+            return
+        }
+        this.hide()
+    }
     _onRecipient(recipient) {
         this._recipient = recipient;
         this._handleShareTargetText();
