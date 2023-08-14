@@ -247,7 +247,7 @@ class SnapdropServer {
         this._send(peer, {
             type: 'peers',
             peers: otherPeers,
-            currentPid: peer.id
+            currentPeerInfo: peer.name
         });
 
         // add peer to room
