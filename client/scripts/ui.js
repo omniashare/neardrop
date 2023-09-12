@@ -68,7 +68,6 @@ class PeersUI {
         if(JSON.stringify(peer.name) == JSON.stringify(currentPeerInfo)){
             Events.fire('notify-user', jQuery.i18n.prop('same_notice'));
         }
-        //if(peer.id === currentPid) return
         if ($(peer.id)) return; // peer already exists
         const peerUI = new PeerUI(peer);
         $$('x-peers').appendChild(peerUI.$el);
@@ -479,7 +478,6 @@ class SendTextDialog extends Dialog {
         this.$text.addEventListener('paste', e => this._onInputPaste(e))
     }
     _onInputPaste(e) {
-        let clipboardData = e.clipboardData
         const files = e.clipboardData.files || e.clipboardData.items
         .filter(i => i.type.indexOf('image') > -1)
         .map(i => i.getAsFile());
