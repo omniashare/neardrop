@@ -732,6 +732,7 @@ x-dialog x-paper {
     max-height: 50vh;
     margin: auto;
     display: block;
+    max-width: 100%;
 }
 
 
