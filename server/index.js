@@ -152,7 +152,6 @@ class SnapdropServer {
 
         this._rooms = {};
 
-        console.log('Snapdrop is running on port', port);
     }
     _initPeer(peer) {
 
