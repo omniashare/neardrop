@@ -3,7 +3,7 @@
 [NearDrop.me](https://neardrop.me): local and remote file sharing in your browser. 
 
 ## Additional Features
-This project is built on top of the open software [Neardrop](https://github.com/omniashare/snapdrop).  While preserving most of the features of Neardrop, the following features are added:
+This project is built on top of the open software [SnapDrop](https://github.com/omniashare/snapdrop).  While preserving most of the features of SnapDrop, the following features are added:
 * Add remote file sharing via user-created rooms
 * Allow users to change local device name
 * Allow cancellation of a time-consuming file transfer process
