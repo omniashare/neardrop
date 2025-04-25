@@ -213,7 +213,6 @@ class PeerUI {
         const files = $input.files;
         //展示cancel按钮
         this.$el.querySelector('.cancel-transfer').style.display = "block"
-        console.log('name1--'+$('displayName').innerText)
         Events.fire('files-selected', {
             files: files,
             to: this._peer.id,
@@ -372,7 +371,12 @@ class ReceiveDialog extends Dialog {
         this.$el.querySelector('#fileSize').textContent = this._formatFileSize(file.size);
         if(sender !== null) $('fileSender').innerHTML = sender
         this.show();
-
+        if(this._isSafari){
+            if(file.mime.split('/')[0] === 'image'){
+                this.$el.querySelector("#img-preview").src = url;
+            }
+        }
+        if(file.mime.split('/')[0] === 'image'){this.$el.querySelector("#img-preview").src = url;}
       //  if (window.isDownloadSupported) return;
         // fallback for iOS
       /*  $a.target = '_blank';
@@ -380,7 +384,16 @@ class ReceiveDialog extends Dialog {
         reader.onload = e => $a.href = reader.result;
         reader.readAsDataURL(file.blob);*/
     }
-
+    _isSafari(){
+        var ua = navigator.userAgent.toLowerCase();
+        if (ua.indexOf('applewebkit') > -1 && ua.indexOf('mobile') > -1 && ua.indexOf('safari') > -1 &&
+            ua.indexOf('linux') === -1 && ua.indexOf('android') === -1 && ua.indexOf('chrome') === -1 &&
+            ua.indexOf('ios') === -1 && ua.indexOf('browser') === -1) {
+            return true;
+        }else{
+            return false;
+        }
+    }
     _formatFileSize(bytes) {
         if (bytes >= 1e9) {
             return (Math.round(bytes / 1e8) / 10) + ' GB';
