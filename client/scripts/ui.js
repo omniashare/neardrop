@@ -213,6 +213,7 @@ class PeerUI {
         const files = $input.files;
         //展示cancel按钮
         this.$el.querySelector('.cancel-transfer').style.display = "block"
+        console.log('name1--'+$('displayName').innerText)
         Events.fire('files-selected', {
             files: files,
             to: this._peer.id,
@@ -323,14 +324,20 @@ class ReceiveDialog extends Dialog {
             window.blop.play();
         });
         this._filesQueue = [];
+        this._currentSender = null
     }
 
     _nextFile(nextFile,sender) {
-        if (nextFile) this._filesQueue.push(nextFile);
+        //if (nextFile) this._filesQueue.push(nextFile);
+        if(nextFile) {
+            this._filesQueue.push(nextFile);
+            if(sender) this._currentSender = null
+        }
         if (this._busy) return;
         this._busy = true;
         const file = this._filesQueue.shift();
         this._displayFile(file,sender);
+        this._displayFile(file,this._currentSender)
     }
 
     _dequeueFile(file,sender) {
@@ -341,7 +348,7 @@ class ReceiveDialog extends Dialog {
         // dequeue next file
         setTimeout(_ => {
             this._busy = false;
-            this._nextFile(undefined,sender);
+            this._nextFile(undefined,this._currentSender);
         }, 300);
     }
 
@@ -363,15 +370,15 @@ class ReceiveDialog extends Dialog {
 
         this.$el.querySelector('#fileName').textContent = file.name;
         this.$el.querySelector('#fileSize').textContent = this._formatFileSize(file.size);
-        $('fileSender').innerHTML = sender
+        if(sender !== null) $('fileSender').innerHTML = sender
         this.show();
 
-        if (window.isDownloadSupported) return;
+      //  if (window.isDownloadSupported) return;
         // fallback for iOS
-        $a.target = '_blank';
+      /*  $a.target = '_blank';
         const reader = new FileReader();
         reader.onload = e => $a.href = reader.result;
-        reader.readAsDataURL(file.blob);
+        reader.readAsDataURL(file.blob);*/
     }
 
     _formatFileSize(bytes) {
