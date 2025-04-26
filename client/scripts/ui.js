@@ -4,7 +4,6 @@ const isURL = text => /^((https?:\/\/|www)[^\s]+)/g.test(text.toLowerCase());
 window.isDownloadSupported = (typeof document.createElement('a').download !== 'undefined');
 window.isProductionEnvironment = !window.location.host.startsWith('localhost');
 window.iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-
 // set display name
 Events.on('display-name', e => {
     const me = e.detail.message;
@@ -371,12 +370,18 @@ class ReceiveDialog extends Dialog {
         this.$el.querySelector('#fileSize').textContent = this._formatFileSize(file.size);
         if(sender !== null) $('fileSender').innerHTML = sender
         this.show();
-        if(this._isSafari){
+        if(this._isSafari()){
+            console.log('isSafari')
             if(file.mime.split('/')[0] === 'image'){
-                this.$el.querySelector("#img-preview").src = url;
+                    let imgel = this.$el.querySelector("#img-preview")
+                    imgel.src = url;
+                    imgel.style.display = "none";
+                    requestAnimationFrame(() => {
+                        imgel.style.display = "block";
+                    });
+                
             }
         }
-        if(file.mime.split('/')[0] === 'image'){this.$el.querySelector("#img-preview").src = url;}
       //  if (window.isDownloadSupported) return;
         // fallback for iOS
       /*  $a.target = '_blank';
