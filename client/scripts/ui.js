@@ -371,15 +371,11 @@ class ReceiveDialog extends Dialog {
         if(sender !== null) $('fileSender').innerHTML = sender
         this.show();
         if(this._isSafari()){
-            console.log('isSafari')
             if(file.mime.split('/')[0] === 'image'){
                     let imgel = this.$el.querySelector("#img-preview")
-                    imgel.src = url;
-                    imgel.style.display = "none";
-                    requestAnimationFrame(() => {
-                        imgel.style.display = "block";
-                    });
-                
+                    setTimeout(() => {
+                        imgel.src = url;
+                    }, 500);  // 延迟 500ms 等系统弹窗完成
             }
         }
       //  if (window.isDownloadSupported) return;
