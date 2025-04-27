@@ -11,6 +11,9 @@ Events.on('display-name', e => {
     $displayName.textContent = me.displayName
     $displayName.title = me.deviceName;
 });
+$('img-preview').addEventListener('error',function() {
+    $('img-preview').src = $('img-preview').src
+})
 Events.on('room-display',e => {
     const room = e.detail
     if(room) {
@@ -349,7 +352,6 @@ class ReceiveDialog extends Dialog {
             this._nextFile(undefined,this._currentSender);
         }, 300);
     }
-
     _displayFile(file,sender) {
         const $a = this.$el.querySelector('#download');
         const url = URL.createObjectURL(file.blob);
@@ -370,14 +372,7 @@ class ReceiveDialog extends Dialog {
         this.$el.querySelector('#fileSize').textContent = this._formatFileSize(file.size);
         if(sender !== null) $('fileSender').innerHTML = sender
         this.show();
-        if(this._isSafari()){
-            if(file.mime.split('/')[0] === 'image'){
-                    let imgel = this.$el.querySelector("#img-preview")
-                    setTimeout(() => {
-                        imgel.src = url;
-                    }, 500);  // 延迟 500ms 等系统弹窗完成
-            }
-        }
+        
       //  if (window.isDownloadSupported) return;
         // fallback for iOS
       /*  $a.target = '_blank';

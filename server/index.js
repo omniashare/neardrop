@@ -1,5 +1,4 @@
 var process = require('process')
-console.log(111)
 // Handle SIGINT
 process.on('SIGINT', () => {
   console.info("SIGINT Received, exiting...")
