@@ -18,7 +18,7 @@ const PREFIXES = [
     'adventurous',
     'affable',
     'ambitious',
-    'amiable ',
+    'amiable',
     'amusing',
     'brave',
     'bright',
@@ -151,9 +151,6 @@ class SnapdropServer {
         this._wss.on('headers', (headers, response) => this._onHeaders(headers, response));
 
         this._rooms = {};
-
-    }
-    _initPeer(peer) {
 
     }
     _onConnection(peer) {
@@ -413,8 +410,8 @@ class Peer {
         }
     }
 
-    modifyDisplayName(dispalyName) {
-        this.name.displayName = dispalyName
+    modifyDisplayName(displayName) {
+        this.name.displayName = displayName
     }
 
     // return uuid of form xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx

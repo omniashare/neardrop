@@ -11,13 +11,46 @@ Events.on('display-name', e => {
     $displayName.textContent = me.displayName
     $displayName.title = me.deviceName;
 });
+let imageRetryCount = 0;
+const maxImageRetries = 3;
 $('img-preview').addEventListener('error',function() {
-    $('img-preview').src = $('img-preview').src
-})
+    imageRetryCount++;
+    console.log('Image load attempt', imageRetryCount, 'failed');
+    if (imageRetryCount <= maxImageRetries) {
+        // Retry with same URL after a short delay
+        setTimeout(() => {
+            console.log('Retrying image load, attempt', imageRetryCount + 1);
+            const currentSrc = $('img-preview').src;
+            $('img-preview').src = ''; // Clear src first
+            $('img-preview').src = currentSrc; // Then set it again to trigger reload
+        }, 1000);
+    } else {
+        // Max retries reached, show placeholder instead of hiding completely
+        console.warn('Image failed to load after', maxImageRetries, 'attempts');
+        const $imgPreview = $('img-preview');
+        $imgPreview.style.display = 'none';
+        
+        // Show a text placeholder for failed images
+        const $preview = $imgPreview.parentElement;
+        const $placeholder = $preview.querySelector('.image-placeholder') || document.createElement('div');
+        $placeholder.className = 'image-placeholder';
+        $placeholder.textContent = 'Image preview not available';
+        $placeholder.style.cssText = 'display: flex; align-items: center; justify-content: center; height: 200px; border: 1px dashed #ccc; color: #666; font-size: 14px;';
+        
+        if (!$preview.querySelector('.image-placeholder')) {
+            $preview.appendChild($placeholder);
+        }
+        
+        imageRetryCount = 0; // Reset for future images
+    }
+});
+$('img-preview').addEventListener('load', function() {
+    imageRetryCount = 0; // Reset counter on successful load
+});
 Events.on('room-display',e => {
     const room = e.detail
     if(room) {
-        const $displayRoom = $('diaplayRoom')
+        const $displayRoom = $('displayRoom')
         $displayRoom.textContent = jQuery.i18n.map['text_room']+room
         document.getElementById('exitRoomBt').style.display = 'block'
         $("body-text-area").innerText =  jQuery.i18n.prop('text_bottom_room')
@@ -64,10 +97,11 @@ class PeersUI {
         Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
         Events.on('close-progress',e => this._closeProgress(e.detail))
         Events.on('clear-cancel',e => this._clearCancel(e.detail))
+        this._currentPeerInfo = null; // Store current peer info for same-device detection
     }
 
-    _onPeerJoined(peer,currentPeerInfo) {
-        if(JSON.stringify(peer.name) == JSON.stringify(currentPeerInfo)){
+    _onPeerJoined(peer) {
+        if(this._currentPeerInfo && JSON.stringify(peer.name) == JSON.stringify(this._currentPeerInfo)){
             Events.fire('notify-user', jQuery.i18n.prop('same_notice'));
         }
         if ($(peer.id)) return; // peer already exists
@@ -82,9 +116,10 @@ class PeersUI {
     }
     _onPeers(msg) {
         const currentPeerInfo = msg.currentPeerInfo
+        this._currentPeerInfo = currentPeerInfo; // Store for individual peer joins
         const peers = msg.peers
         this._clearPeers();
-        peers.forEach(peer => this._onPeerJoined(peer,currentPeerInfo));
+        peers.forEach(peer => this._onPeerJoined(peer));
     }
 
     _onPeerLeft(peerId) {
@@ -213,7 +248,11 @@ class PeerUI {
     _onFilesSelected(e) {
         const $input = e.target;
         const files = $input.files;
-        //展示cancel按钮
+        // Reset cancel state for new transfer
+        this._hasCancel = false;
+        // Reset progress for new transfer
+        this.setProgress(0);
+        // Show cancel button
         this.$el.querySelector('.cancel-transfer').style.display = "block"
         Events.fire('files-selected', {
             files: files,
@@ -236,10 +275,15 @@ class PeerUI {
         const degrees = `rotate(${360 * progress}deg)`;
         this.$progress.style.setProperty('--progress', degrees);
         if (progress >= 1) {
-            this.setProgress(0);
-            this.$el.removeAttribute('transfer');
-            this.$el.querySelector('.cancel-transfer').style.display = "none"
+            this._resetProgress();
         }
+    }
+
+    _resetProgress() {
+        this.setProgress(0);
+        this.$el.removeAttribute('transfer');
+        this.$el.querySelector('.cancel-transfer').style.display = "none"
+        this._hasCancel = true; // Match closeProgress behavior
     }
     clearCancel() {
         this._hasCancel = false
@@ -254,6 +298,10 @@ class PeerUI {
     _onDrop(e) {
         e.preventDefault();
         const files = e.dataTransfer.files;
+        // Reset cancel state for new transfer
+        this._hasCancel = false;
+        // Reset progress for new transfer
+        this.setProgress(0);
         Events.fire('files-selected', {
             files: files,
             to: this._peer.id,
@@ -322,23 +370,31 @@ class ReceiveDialog extends Dialog {
         super('receiveDialog');
         Events.on('file-received', e => {
             this._nextFile(e.detail.file, e.detail.sender);
-            window.blop.play();
+            // Try to play sound, but handle autoplay restrictions gracefully
+            try {
+                window.blop.play().catch(error => {
+                    console.log('Audio play failed due to browser autoplay policy:', error.message);
+                });
+            } catch (error) {
+                console.log('Audio play error:', error.message);
+            }
         });
         this._filesQueue = [];
-        this._currentSender = null
+        this._currentSender = null;
+        this._currentObjectUrl = null; // Track current Object URL for cleanup
     }
 
     _nextFile(nextFile,sender) {
         //if (nextFile) this._filesQueue.push(nextFile);
         if(nextFile) {
             this._filesQueue.push(nextFile);
-            if(sender) this._currentSender = null
+            if(sender) this._currentSender = sender
         }
         if (this._busy) return;
         this._busy = true;
         const file = this._filesQueue.shift();
-        this._displayFile(file,sender);
-        this._displayFile(file,this._currentSender)
+        const fileSender = sender || this._currentSender;
+        this._displayFile(file, fileSender);
     }
 
     _dequeueFile(file,sender) {
@@ -353,8 +409,14 @@ class ReceiveDialog extends Dialog {
         }, 300);
     }
     _displayFile(file,sender) {
+        // Revoke previous Object URL to prevent memory leaks
+        if (this._currentObjectUrl) {
+            URL.revokeObjectURL(this._currentObjectUrl);
+        }
+        
         const $a = this.$el.querySelector('#download');
         const url = URL.createObjectURL(file.blob);
+        this._currentObjectUrl = url; // Store for cleanup
         $a.href = url;
         $a.download = file.name;
 
@@ -363,14 +425,28 @@ class ReceiveDialog extends Dialog {
             return
         }
         if(file.mime.split('/')[0] === 'image'){
-            console.log('the file is image');
-            this.$el.querySelector('.preview').style.visibility = 'inherit';
-            this.$el.querySelector("#img-preview").src = url;
+            console.log('the file is image, blob size:', file.blob.size);
+            // Reset image preview visibility and state for new image
+            const $preview = this.$el.querySelector('.preview');
+            const $imgPreview = this.$el.querySelector("#img-preview");
+            
+            // Remove any existing placeholder
+            const $placeholder = $preview.querySelector('.image-placeholder');
+            if ($placeholder) {
+                $placeholder.remove();
+            }
+            
+            // Reset image retry counter for new image
+            imageRetryCount = 0;
+            
+            $preview.style.visibility = 'inherit';
+            $imgPreview.style.display = 'block';
+            $imgPreview.src = url;
         }
 
         this.$el.querySelector('#fileName').textContent = file.name;
         this.$el.querySelector('#fileSize').textContent = this._formatFileSize(file.size);
-        if(sender !== null) $('fileSender').innerHTML = sender
+        if(sender !== null) $('fileSender').textContent = sender
         this.show();
         
       //  if (window.isDownloadSupported) return;
@@ -475,6 +551,9 @@ class JoinRoomDialog extends Dialog {
         location.reload()
     }
     _getRandomSixDigit() {
+        // Note: This generates 6-digit codes with potential collision risk
+        // Only 1 million possible combinations (000000-999999)
+        // For production use, consider server-side generation with collision detection
         let code = ''
         for(var i=0;i<6;i++){
             code += parseInt(Math.random()*10)
@@ -540,11 +619,11 @@ class ReceiveTextDialog extends Dialog {
         Events.on('text-received', e => this._onText(e.detail))
         this.$text = this.$el.querySelector('#text');
         const $copy = this.$el.querySelector('#copy');
-        copy.addEventListener('click', _ => this._onCopy());
+        $copy.addEventListener('click', _ => this._onCopy());
     }
 
     _onText(e) {
-        $('sender').innerHTML = e.sender
+        $('sender').textContent = e.sender
         this.$text.innerHTML = '';
         const text = e.text;
         if (isURL(text)) {
@@ -557,7 +636,14 @@ class ReceiveTextDialog extends Dialog {
             this.$text.textContent = text;
         }
         this.show();
-        window.blop.play();
+        // Try to play sound, but handle autoplay restrictions gracefully
+        try {
+            window.blop.play().catch(error => {
+                console.log('Audio play failed due to browser autoplay policy:', error.message);
+            });
+        } catch (error) {
+            console.log('Audio play error:', error.message);
+        }
     }
 
     async _onCopy() {
@@ -830,5 +916,11 @@ which can be accessed by clicking the lock icon next to the URL.`;
 document.body.onclick = e => { // safari hack to fix audio
     document.body.onclick = null;
     if (!(/.*Version.*Safari.*/.test(navigator.userAgent))) return;
-    blop.play();
+    try {
+        blop.play().catch(error => {
+            console.log('Safari audio hack failed:', error.message);
+        });
+    } catch (error) {
+        console.log('Safari audio hack error:', error.message);
+    }
 }

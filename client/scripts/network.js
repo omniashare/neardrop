@@ -13,12 +13,11 @@ class ServerConnection {
     _connect() {
         clearTimeout(this._reconnectTimer);
         if (this._isConnected() || this._isConnecting()) return;
-       // const ws = new WebSocket(this._endpoint());
         const lastDisplayName = localStorage.getItem('displayname')
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
         const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-     //  const ws = lastDisplayName ?new WebSocket('ws://192.168.3.140:3000/server/webrtc?lastDisplayName='+lastDisplayName+'&room='+roomid):new WebSocket('ws://192.168.3.178:3000/server/webrtc?room='+roomid)
+       //const ws = lastDisplayName ?new WebSocket('ws://192.168.1.14:3000/server/webrtc?lastDisplayName='+encodeURIComponent(lastDisplayName)+'&room='+encodeURIComponent(roomid)):new WebSocket('ws://192.168.3.178:3000/server/webrtc?room='+encodeURIComponent(roomid))
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => console.log('WS: server connected');
         ws.onmessage = e => this._onMessage(e.data);
@@ -28,7 +27,13 @@ class ServerConnection {
     }
 
     _onMessage(msg) {
-        msg = JSON.parse(msg);
+        try {
+            msg = JSON.parse(msg);
+        } catch (e) {
+            console.error('Failed to parse WebSocket message:', e, msg);
+            return; // Skip malformed message
+        }
+        
         switch (msg.type) {
             case 'peers':
               //  Events.fire('peers', msg.peers);
@@ -106,6 +111,7 @@ class Peer {
         this._filesQueue = [];
         this._busy = false;
         this._cancel = false;
+        this._currentSender = null; // Track current sender for file transfers
     }
 
     sendJSON(message) {
@@ -113,24 +119,38 @@ class Peer {
     }
 
     sendFiles(files,sender) {
+        // Store current sender for subsequent files in queue
+        this._currentSender = sender;
         for (let i = 0; i < files.length; i++) {
             this._filesQueue.push(files[i]);
         }
-        if (this._busy) return;
-        this._dequeueFile(sender);
+        // Always try to dequeue if not busy, even if files were already in queue
+        if (!this._busy) {
+            this._dequeueFile(sender);
+        }
     }
 
     _dequeueFile(sender) {
+        this._busy = true;
         if (!this._filesQueue.length && this._cancel) {
             Events.fire('close-progress',{sender: this._peerId});
             this._sendCancelFile(this._peerId)
             return
         }
+        
+        // Check if queue is empty
+        if (!this._filesQueue.length) {
+            this._busy = false;
+            return;
+        }
+        
         this._sendClearCancel()
         Events.fire('clear-cancel', {sender: this._peerId});
         this._cancel = false
         const file = this._filesQueue.shift();
-        this._sendFile(file,sender);
+        // Use provided sender or maintain the current sender context
+        const fileSender = sender || this._currentSender;
+        this._sendFile(file, fileSender);
     }
     //通知关闭传输
     _sendCancelFile(sender) {
@@ -170,7 +190,17 @@ class Peer {
     }
 
     _onPartitionEnd(offset) {
-        this.sendJSON({ type: 'partition', offset: offset });
+        if (this._chunker && this._chunker.isFileEnd()) {
+            // File is completely sent, notify completion
+            this.sendJSON({ type: 'transfer-complete', sender: this._currentSender });
+            this._chunker = null;
+            // Reset sender state for next file
+            this._busy = false;
+            this._dequeueFile(); // Continue with next file in queue
+        } else {
+            // Send partition info and wait for acknowledgment
+            this.sendJSON({ type: 'partition', offset: offset });
+        }
     }
 
     _onReceivedPartitionEnd(offset) {
@@ -226,7 +256,7 @@ class Peer {
         }
     }
 
-    _onFileHeader(header) {
+    _onFileHeader(header, sender) {
         this._lastProgress = 0;
         this._digester = new FileDigester({
             name: header.name,
@@ -262,7 +292,7 @@ class Peer {
         this._onDownloadProgress(1);
         this._reader = null;
         this._busy = false;
-        this._dequeueFile(sender);
+        // Receiver doesn't need to dequeue files - that's sender's responsibility
         Events.fire('notify-user', jQuery.i18n.prop('transfer_completed_toast'));
     }
 
@@ -283,11 +313,20 @@ class RTCPeer extends Peer {
 
     constructor(serverConnection, peerId, peerDisplayname) {
         super(serverConnection, peerId, peerDisplayname);
+        this._sendQueue = [];
+        this._isSendPaused = false;
+        this._bufferedAmountLowThreshold = 1024 * 1024; // 1MB
         if (!peerId) return; // we will listen for a caller
         this._connect(peerId, true);
     }
 
     _connect(peerId, isCaller) {
+        // Check if existing connection is closed and needs to be recreated
+        if (this._conn && this._conn.signalingState === 'closed') {
+            console.log('RTC: Connection is closed, creating new connection');
+            this._conn = null;
+        }
+        
         if (!this._conn) this._openConnection(peerId, isCaller);
 
         if (isCaller) {
@@ -307,6 +346,12 @@ class RTCPeer extends Peer {
     }
 
     _openChannel() {
+        // Check if connection is still open before creating data channel
+        if (!this._conn || this._conn.signalingState === 'closed') {
+            console.warn('RTC: Cannot create data channel - connection is closed');
+            return;
+        }
+        
         const channel = this._conn.createDataChannel('data-channel', { 
             ordered: true,
             reliable: true // Obsolete. See https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/reliable
@@ -345,18 +390,49 @@ class RTCPeer extends Peer {
     }
 
     _onChannelOpened(event) {
-        console.log('RTC: channel opened with', this._peerId);
         const channel = event.channel || event.target;
         channel.binaryType = 'arraybuffer';
         channel.onmessage = e => this._onMessage(e.data);
         channel.onclose = e => this._onChannelClosed();
+        channel.bufferedAmountLowThreshold = this._bufferedAmountLowThreshold;
+        channel.onbufferedamountlow = e => this._onBufferedAmountLow();
         this._channel = channel;
     }
 
     _onChannelClosed() {
         console.log('RTC: channel closed', this._peerId);
-        if (!this.isCaller) return;
-        this._connect(this._peerId, true); // reopen the channel
+        if (!this._isCaller) return;
+        
+        // Only attempt to reconnect if the connection is not already closed
+        if (this._conn && this._conn.signalingState !== 'closed') {
+            console.log('RTC: Attempting to reconnect channel for', this._peerId);
+            this._connect(this._peerId, true);
+        } else {
+            console.log('RTC: Connection is closed, cannot reconnect channel for', this._peerId);
+        }
+    }
+
+    _onBufferedAmountLow() {
+        console.log('RTC: buffered amount low, resuming sends');
+        this._isSendPaused = false;
+        
+        // Send queued messages
+        while (this._sendQueue.length > 0 && !this._isSendPaused) {
+            const message = this._sendQueue.shift();
+            if (this._channel.bufferedAmount > this._bufferedAmountLowThreshold) {
+                this._sendQueue.unshift(message); // Put it back
+                this._isSendPaused = true;
+                break;
+            }
+            
+            try {
+                this._channel.send(message);
+            } catch (e) {
+                console.error('RTC: send error while flushing queue', e);
+                this.refresh();
+                break;
+            }
+        }
     }
 
     _onConnectionStateChange(e) {
@@ -388,7 +464,20 @@ class RTCPeer extends Peer {
 
     _send(message) {
         if (!this._channel) return this.refresh();
-        this._channel.send(message);
+        
+        // Check if we need to pause sending
+        if (this._channel.bufferedAmount > this._bufferedAmountLowThreshold) {
+            this._sendQueue.push(message);
+            this._isSendPaused = true;
+            return;
+        }
+        
+        try {
+            this._channel.send(message);
+        } catch (e) {
+            console.error('RTC: send error', e);
+            this.refresh();
+        }
     }
 
     _sendSignal(signal) {
@@ -446,28 +535,43 @@ class PeersManager {
             if (window.isRtcSupported && peer.rtcSupported) {
                 this.peers[peer.id] = new RTCPeer(this._server, peer.id, peer.name.displayName);
             } else {
-                this.peers[peer.id] = new WSPeer(this._server, peer.id);
+                this.peers[peer.id] = new WSPeer(this._server, peer.id, peer.name.displayName);
             }
         })
     }
 
     sendTo(peerId, message) {
-        this.peers[peerId].send(message);
+        const peer = this.peers[peerId];
+        if (!peer) {
+            console.warn('Peer not found:', peerId);
+            return;
+        }
+        peer.send(message);
     }
 
     _onFilesSelected(message) {
-        this.peers[message.to].sendFiles(message.files,message.sender);
+        const peer = this.peers[message.to];
+        if (!peer) {
+            console.warn('Target peer not found for file transfer:', message.to);
+            return;
+        }
+        peer.sendFiles(message.files,message.sender);
     }
 
     _onSendText(message) {
-        this.peers[message.to].sendText(message.text,message.from);
+        const peer = this.peers[message.to];
+        if (!peer) {
+            console.warn('Target peer not found for text message:', message.to);
+            return;
+        }
+        peer.sendText(message.text,message.from);
     }
 
     _onPeerLeft(peerId) {
         const peer = this.peers[peerId];
         delete this.peers[peerId];
-        if (!peer || !peer._peer) return;
-        peer._peer.close();
+        if (!peer || !peer._conn) return;
+        peer._conn.close();
     }
 
     //修改peer的名字
@@ -478,12 +582,22 @@ class PeersManager {
 
     //取消发送
     _onCancelSend(message) {
-        this.peers[message.to].cancelSend()
+        const peer = this.peers[message.to];
+        if (!peer) {
+            console.warn('Target peer not found for cancel send:', message.to);
+            return;
+        }
+        peer.cancelSend()
     }
 
 }
 
-class WSPeer {
+class WSPeer extends Peer {
+    
+    constructor(serverConnection, peerId, peerDisplayname) {
+        super(serverConnection, peerId, peerDisplayname);
+    }
+
     _send(message) {
         message.to = this._peerId;
         this._server.send(message);
@@ -518,7 +632,11 @@ class FileChunker {
         this._offset += chunk.byteLength;
         this._partitionSize += chunk.byteLength;
         this._onChunk(chunk);
-        if (this.isFileEnd()) return;
+        if (this.isFileEnd()) {
+            // Notify that file is completely sent
+            this._onPartitionEnd(this._offset);
+            return;
+        }
         if (this._isPartitionEnd()) {
             this._onPartitionEnd(this._offset);
             return;
@@ -597,6 +715,9 @@ RTCPeer.config = {
             urls: 'stun:stun.l.google.com:19302',
         },
         {
+            // Note: These are public TURN server credentials from openrelayproject
+            // They are intentionally hardcoded for client-side WebRTC connectivity
+            // While public, they should be monitored for potential abuse
             urls: "turn:openrelay.metered.ca:80",
             username: "openrelayproject",
             credential: "openrelayproject",

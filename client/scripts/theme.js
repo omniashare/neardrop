@@ -15,6 +15,10 @@
   } else if (currentTheme == 'light') {
     // ...let's toggle the .light-theme class on the body
     document.body.classList.toggle('light-theme');
+  // Otherwise, if no localStorage preference and system prefers dark mode...
+  } else if (prefersDarkScheme.matches) {
+    // ...let's add the .dark-theme class to match system preference
+    document.body.classList.add('dark-theme');
   }
    
   // Listen for a click on the button 
