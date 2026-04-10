@@ -37,15 +37,19 @@ class ServerConnection {
         switch (msg.type) {
             case 'peers':
               //  Events.fire('peers', msg.peers);
+              console.log('[WS] Received peers list from server');
               Events.fire('peers', msg);
                 break;
             case 'peer-joined':
+                console.log('[WS] Received peer-joined from server, peer:', msg.peer.id);
                 Events.fire('peer-joined', msg.peer);
                 break;
             case 'peer-left':
+                console.log('[WS] Received peer-left from server, peerId:', msg.peerId);
                 Events.fire('peer-left', msg.peerId);
                 break;
             case 'signal':
+                console.log('[WS] Received signal from server, from peer:', msg.sender, 'type:', msg.sdp ? msg.sdp.type : 'ice');
                 Events.fire('signal', msg);
                 break;
             case 'ping':
@@ -167,6 +171,8 @@ class Peer {
     }
     _sendFile(file,sender) {
         if(!file) return
+        const iceInfo = this.getIceCandidateInfo();
+        console.log('[File] Sending file via RTC DataChannel to peer:', this._peerId, 'filename:', file.name, 'size:', file.size, 'ICE:', iceInfo);
         this.sendJSON({
             type: 'header',
             name: file.name,
@@ -257,6 +263,8 @@ class Peer {
     }
 
     _onFileHeader(header, sender) {
+        const iceInfo = this.getIceCandidateInfo();
+        console.log('[File] Received file header from peer:', this._peerId, 'sender:', sender, 'filename:', header.name, 'size:', header.size, 'ICE:', iceInfo);
         this._lastProgress = 0;
         this._digester = new FileDigester({
             name: header.name,
@@ -276,6 +284,7 @@ class Peer {
         if (progress - this._lastProgress < 0.01) return;
         this._lastProgress = progress;
         this._sendProgress(progress);
+        console.log('[File] Received chunk from peer:', this._peerId, 'progress:', (progress * 100).toFixed(1) + '%');
     }
 
     _onDownloadProgress(progress) {
@@ -283,12 +292,14 @@ class Peer {
     }
 
     _onFileReceived(proxyFile,sender) {
+        console.log('[File] File received complete from peer:', this._peerId, 'sender:', sender, 'filename:', proxyFile.name, 'size:', proxyFile.size);
         Events.fire('file-received', {file:proxyFile, sender:sender});
         Events.fire('clear-cancel', {recipient: this._peerId});
         this.sendJSON({ type: 'transfer-complete' ,sender: sender});
     }
 
     _onTransferCompleted(sender) {
+        console.log('[File] Transfer completed for peer:', this._peerId, 'sender:', sender);
         this._onDownloadProgress(1);
         this._reader = null;
         this._busy = false;
@@ -297,6 +308,8 @@ class Peer {
     }
 
     sendText(text,sender) {
+        const iceInfo = this.getIceCandidateInfo();
+        console.log('[Text] Sending text via RTC DataChannel to peer:', this._peerId, 'length:', text.length, 'ICE:', iceInfo);
         const unescaped = btoa(unescape(encodeURIComponent(text)));
         const unescapedSender = btoa(unescape(encodeURIComponent(sender)));
         this.sendJSON({ type: 'text', text: unescaped, sender: unescapedSender});
@@ -305,6 +318,8 @@ class Peer {
     _onTextReceived(message,sender) {
         const escaped = decodeURIComponent(escape(atob(message.text)));
         const escapedSender = decodeURIComponent(escape(atob(sender)));
+        const iceInfo = this.getIceCandidateInfo();
+        console.log('[Text] Received text from peer:', this._peerId, 'sender:', escapedSender, 'length:', escaped.length, 'ICE:', iceInfo);
         Events.fire('text-received', { text: escaped, sender: escapedSender });
     }
 }
@@ -316,12 +331,11 @@ class RTCPeer extends Peer {
         this._sendQueue = [];
         this._isSendPaused = false;
         this._bufferedAmountLowThreshold = 1024 * 1024; // 1MB
-        if (!peerId) return; // we will listen for a caller
+        if (!peerId) return;
         this._connect(peerId, true);
     }
 
     _connect(peerId, isCaller) {
-        // Check if existing connection is closed and needs to be recreated
         if (this._conn && this._conn.signalingState === 'closed') {
             console.log('RTC: Connection is closed, creating new connection');
             this._conn = null;
@@ -343,6 +357,41 @@ class RTCPeer extends Peer {
         this._conn.onicecandidate = e => this._onIceCandidate(e);
         this._conn.onconnectionstatechange = e => this._onConnectionStateChange(e);
         this._conn.oniceconnectionstatechange = e => this._onIceConnectionStateChange(e);
+        
+        console.log('[RTC] Created RTCPeerConnection for peer:', peerId, 'config:', RTCPeer.config);
+        
+        this._conn.getSenders().forEach(sender => {
+            console.log('[RTC] Sender:', sender.track?.kind, sender.track?.id);
+        });
+        
+        this._conn.getReceivers().forEach(receiver => {
+            console.log('[RTC] Receiver:', receiver.track?.kind, receiver.track?.id);
+        });
+    }
+
+    getIceCandidateInfo() {
+        if (!this._conn) return null;
+        try {
+            const selectedPair = this._conn.getSenders()[0]?.transport?.iceTransport?.getSelectedCandidatePair();
+            if (selectedPair) {
+                return {
+                    local: {
+                        type: selectedPair.local?.type,
+                        protocol: selectedPair.local?.protocol,
+                        address: selectedPair.local?.address,
+                        port: selectedPair.local?.port,
+                    },
+                    remote: {
+                        type: selectedPair.remote?.type,
+                        protocol: selectedPair.remote?.protocol,
+                        address: selectedPair.remote?.address,
+                        port: selectedPair.remote?.port,
+                    },
+                    state: selectedPair.state,
+                };
+            }
+        } catch (e) {}
+        return null;
     }
 
     _openChannel() {
@@ -367,15 +416,11 @@ class RTCPeer extends Peer {
             .catch(e => this._onError(e));
     }
 
-    _onIceCandidate(event) {
-        if (!event.candidate) return;
-        this._sendSignal({ ice: event.candidate });
-    }
-
     onServerMessage(message) {
         if (!this._conn) this._connect(message.sender, false);
 
         if (message.sdp) {
+            console.log('Received SDP', message.sdp.type, 'from peer:', message.sender);
             this._conn.setRemoteDescription(new RTCSessionDescription(message.sdp))
                 .then( _ => {
                     if (message.sdp.type === 'offer') {
@@ -385,6 +430,7 @@ class RTCPeer extends Peer {
                 })
                 .catch(e => this._onError(e));
         } else if (message.ice) {
+            console.log('Received ICE candidate from peer:', message.sender, 'candidate:', message.ice.candidate);
             this._conn.addIceCandidate(new RTCIceCandidate(message.ice));
         }
     }
@@ -397,6 +443,7 @@ class RTCPeer extends Peer {
         channel.bufferedAmountLowThreshold = this._bufferedAmountLowThreshold;
         channel.onbufferedamountlow = e => this._onBufferedAmountLow();
         this._channel = channel;
+        console.log('[RTC] DataChannel opened with peer:', this._peerId);
     }
 
     _onChannelClosed() {
@@ -436,7 +483,11 @@ class RTCPeer extends Peer {
     }
 
     _onConnectionStateChange(e) {
-        console.log('RTC: state changed:', this._conn.connectionState);
+        console.log('[RTC] Connection state changed for peer:', this._peerId, 'state:', this._conn.connectionState);
+        console.log('[RTC] ICE Connection state:', this._conn.iceConnectionState);
+        console.log('[RTC] Signaling state:', this._conn.signalingState);
+        console.log('[RTC] Connection state:', this._conn.connectionState);
+        
         switch (this._conn.connectionState) {
             case 'disconnected':
                 this._onChannelClosed();
@@ -451,11 +502,38 @@ class RTCPeer extends Peer {
     _onIceConnectionStateChange() {
         switch (this._conn.iceConnectionState) {
             case 'failed':
-                console.error('ICE Gathering failed');
+                console.error('ICE failed for peer:', this._peerId, 'state:', this._conn.iceConnectionState);
+                break;
+            case 'connected':
+                console.log('ICE connected for peer:', this._peerId);
+                break;
+            case 'checking':
+                console.log('ICE checking for peer:', this._peerId);
+                break;
+            case 'completed':
+                console.log('ICE completed for peer:', this._peerId);
                 break;
             default:
-                console.log('ICE Gathering', this._conn.iceConnectionState);
+                console.log('ICE state', this._conn.iceConnectionState, 'for peer:', this._peerId);
         }
+    }
+
+    _onIceCandidate(event) {
+        if (!event.candidate) {
+            console.log('ICE candidate gathering complete for peer:', this._peerId);
+            return;
+        }
+        const c = event.candidate;
+        console.log('ICE candidate for peer:', this._peerId, {
+            type: c.type,
+            protocol: c.protocol,
+            address: c.address,
+            port: c.port,
+            priority: c.priority,
+            foundation: c.foundation,
+            candidate: c.candidate
+        });
+        this._sendSignal({ ice: event.candidate });
     }
 
     _onError(error) {
@@ -474,6 +552,7 @@ class RTCPeer extends Peer {
         
         try {
             this._channel.send(message);
+            console.log('[RTC] Data sent via RTC DataChannel to peer:', this._peerId, 'type:', typeof message === 'string' ? JSON.parse(message).type : 'binary chunk');
         } catch (e) {
             console.error('RTC: send error', e);
             this.refresh();
@@ -483,11 +562,15 @@ class RTCPeer extends Peer {
     _sendSignal(signal) {
         signal.type = 'signal';
         signal.to = this._peerId;
+        if (signal.ice) {
+            console.log('Sending ICE candidate via WebSocket to peer:', this._peerId, 'candidate:', signal.ice.candidate);
+        } else if (signal.sdp) {
+            console.log('Sending SDP', signal.sdp.type, 'via WebSocket to peer:', this._peerId);
+        }
         this._server.send(signal);
     }
 
     refresh() {
-        // check if channel is open. otherwise create one
         if (this._isConnected() || this._isConnecting()) return;
         this._connect(this._peerId, this._isCaller);
     }
@@ -600,6 +683,7 @@ class WSPeer extends Peer {
 
     _send(message) {
         message.to = this._peerId;
+        console.log('[WS] Sending via WebSocket to peer:', this._peerId, 'type:', typeof message === 'string' ? JSON.parse(message).type : 'binary');
         this._server.send(message);
     }
 }
@@ -711,26 +795,11 @@ class Events {
 RTCPeer.config = {
     'sdpSemantics': 'unified-plan',
     'iceServers': [
+        { urls: 'stun:stun.l.google.com:19302' },
         {
-            urls: 'stun:stun.l.google.com:19302',
-        },
-        {
-            // Note: These are public TURN server credentials from openrelayproject
-            // They are intentionally hardcoded for client-side WebRTC connectivity
-            // While public, they should be monitored for potential abuse
-            urls: "turn:openrelay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-        },
-        {
-            urls: "turn:openrelay.metered.ca:443",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-        },
-        {
-            urls: "turn:openrelay.metered.ca:443?transport=tcp",
-            username: "openrelayproject",
-            credential: "openrelayproject",
+            urls: "turn:free.expressturn.com:3478",
+            username: "000000002091239258",
+            credential: "N+KIX4PNnYDxKKJfrAuzRpAoWwQ=",
         },
     ],
 }

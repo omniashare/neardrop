@@ -200,6 +200,7 @@ class SnapdropServer {
             delete message.to;
             // add sender id
             message.sender = sender.id;
+            console.log('[Signal] Relaying', message.ice ? 'ICE candidate' : (message.sdp ? 'SDP ' + message.sdp.type : 'signal'), 'from', sender.id, 'to', recipientId);
             this._send(recipient, message);
             return;
         }
