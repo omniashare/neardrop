@@ -332,7 +332,7 @@ class RTCPeer extends Peer {
         this._isSendPaused = false;
         this._bufferedAmountLowThreshold = 1024 * 1024; // 1MB
         if (!peerId) return;
-        this._connect(peerId, true).catch(e => console.error('Failed to connect:', e));
+        this._connect(peerId, true);
     }
 
     _connect(peerId, isCaller) {
@@ -350,16 +350,15 @@ class RTCPeer extends Peer {
         }
     }
 
-async _openConnection(peerId, isCaller) {
+    _openConnection(peerId, isCaller) {
         this._isCaller = isCaller;
         this._peerId = peerId;
-        const config = await fetchRTCConfig();
-        this._conn = new RTCPeerConnection(config);
+        this._conn = new RTCPeerConnection(RTCPeer.config);
         this._conn.onicecandidate = e => this._onIceCandidate(e);
         this._conn.onconnectionstatechange = e => this._onConnectionStateChange(e);
         this._conn.oniceconnectionstatechange = e => this._onIceConnectionStateChange(e);
         
-        console.log('[RTC] Created RTCPeerConnection for peer:', peerId, 'config:', config);
+        console.log('[RTC] Created RTCPeerConnection for peer:', peerId, 'config:', RTCPeer.config);
         
         this._conn.getSenders().forEach(sender => {
             console.log('[RTC] Sender:', sender.track?.kind, sender.track?.id);
@@ -418,7 +417,7 @@ async _openConnection(peerId, isCaller) {
     }
 
     onServerMessage(message) {
-        if (!this._conn) this._connect(message.sender, false).catch(e => console.error('Failed to connect:', e));
+        if (!this._conn) this._connect(message.sender, false);
 
         if (message.sdp) {
             console.log('Received SDP', message.sdp.type, 'from peer:', message.sender);
@@ -454,7 +453,7 @@ async _openConnection(peerId, isCaller) {
         // Only attempt to reconnect if the connection is not already closed
         if (this._conn && this._conn.signalingState !== 'closed') {
             console.log('RTC: Attempting to reconnect channel for', this._peerId);
-            this._connect(this._peerId, true).catch(e => console.error('Failed to reconnect:', e));
+            this._connect(this._peerId, true);
         } else {
             console.log('RTC: Connection is closed, cannot reconnect channel for', this._peerId);
         }
@@ -573,7 +572,7 @@ async _openConnection(peerId, isCaller) {
 
     refresh() {
         if (this._isConnected() || this._isConnecting()) return;
-        this._connect(this._peerId, this._isCaller).catch(e => console.error('Failed to refresh:', e));
+        this._connect(this._peerId, this._isCaller);
     }
 
     _isConnected() {
@@ -792,22 +791,15 @@ class Events {
     }
 }
 
-let _cachedRTCConfig = null;
 
-async function fetchRTCConfig() {
-    if (_cachedRTCConfig) {
-        return _cachedRTCConfig;
-    }
-    try {
-        const response = await fetch('/ice-servers');
-        const iceServers = await response.json();
-        const hostnames = iceServers.map(server => server.urls).flat();
-        console.log('[ICE] Fetched from /ice-servers:', hostnames);
-        _cachedRTCConfig = { 'sdpSemantics': 'unified-plan', 'iceServers': iceServers };
-        return _cachedRTCConfig;
-    } catch (error) {
-        console.error('[ICE] Failed to fetch from /ice-servers:', error);
-        _cachedRTCConfig = { 'sdpSemantics': 'unified-plan', 'iceServers': [{ urls: 'stun:stun.l.google.com:19302' }] };
-        return _cachedRTCConfig;
-    }
+RTCPeer.config = {
+    'sdpSemantics': 'unified-plan',
+    'iceServers': [
+        { urls: 'stun:stun.l.google.com:19302' },
+        {
+            urls: "turn:free.expressturn.com:3478",
+            username: "000000002091239258",
+            credential: "N+KIX4PNnYDxKKJfrAuzRpAoWwQ=",
+        },
+    ],
 }
