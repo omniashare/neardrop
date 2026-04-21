@@ -15,18 +15,15 @@ let imageRetryCount = 0;
 const maxImageRetries = 3;
 $('img-preview').addEventListener('error',function() {
     imageRetryCount++;
-    console.log('Image load attempt', imageRetryCount, 'failed');
     if (imageRetryCount <= maxImageRetries) {
         // Retry with same URL after a short delay
         setTimeout(() => {
-            console.log('Retrying image load, attempt', imageRetryCount + 1);
             const currentSrc = $('img-preview').src;
             $('img-preview').src = ''; // Clear src first
             $('img-preview').src = currentSrc; // Then set it again to trigger reload
         }, 1000);
     } else {
         // Max retries reached, show placeholder instead of hiding completely
-        console.warn('Image failed to load after', maxImageRetries, 'attempts');
         const $imgPreview = $('img-preview');
         $imgPreview.style.display = 'none';
         
@@ -153,6 +150,12 @@ class PeersUI {
     }
 
     _onPaste(e) {
+        // 检查发送文字对话框是否打开，如果打开则不处理粘贴事件
+        const sendTextDialog = document.getElementById('sendTextDialog');
+        if (sendTextDialog && sendTextDialog.hasAttribute('show')) {
+            return; // 让发送文字对话框自己处理粘贴
+        }
+        
         const files = e.clipboardData.files || e.clipboardData.items
             .filter(i => i.type.indexOf('image') > -1)
             .map(i => i.getAsFile());
@@ -567,6 +570,8 @@ class SendTextDialog extends Dialog {
         super('sendTextDialog');
         Events.on('text-recipient', e => this._onRecipient(e.detail))
         this.$text = this.$el.querySelector('#textInput');
+        this._pendingImageFiles = null; // 初始化待发送图片属性
+        this._imageUrls = []; // 存储图片 URL 用于清理
         const button = this.$el.querySelector('form');
         button.addEventListener('submit', e => this._send(e));
         //绑定paste事件
@@ -576,15 +581,69 @@ class SendTextDialog extends Dialog {
         const files = e.clipboardData.files || e.clipboardData.items
         .filter(i => i.type.indexOf('image') > -1)
         .map(i => i.getAsFile());
+        
         if(!files.length) {
             return
         }
-        this.hide()
+        
+        // 阻止默认粘贴行为
+        e.preventDefault();
+        
+        // 存储图片文件，等待发送时使用
+        this._pendingImageFiles = files;
+        
+        // 在输入框中显示图片预览
+        this._displayImagePreviews(files);
+    }
+
+    _displayImagePreviews(files) {
+        // 清理之前的图片 URL
+        this._cleanupImageUrls();
+        
+        let previewHtml = '<div style="margin: 10px 0;">';
+        
+        // 将 FileList 转换为数组
+        const fileArray = Array.from(files);
+        
+        fileArray.forEach((file, index) => {
+            const url = URL.createObjectURL(file);
+            this._imageUrls.push(url); // 存储 URL 用于后续清理
+            
+            previewHtml += `
+                <div style="margin-bottom: 10px;">
+                    <img src="${url}" style="max-width: 200px; max-height: 150px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; margin-bottom: 5px;">
+                    <div style="font-size: 12px; color: #666;">${file.name} (${this._formatFileSize(file.size)})</div>
+                </div>
+            `;
+        });
+        
+        previewHtml += '</div>';
+        
+        this.$text.innerHTML = previewHtml;
+    }
+
+    _cleanupImageUrls() {
+        this._imageUrls.forEach(url => URL.revokeObjectURL(url));
+        this._imageUrls = [];
+    }
+
+    _formatFileSize(bytes) {
+        if (bytes >= 1e9) {
+            return (Math.round(bytes / 1e8) / 10) + ' GB';
+        } else if (bytes >= 1e6) {
+            return (Math.round(bytes / 1e5) / 10) + ' MB';
+        } else if (bytes > 1000) {
+            return Math.round(bytes / 1000) + ' KB';
+        } else {
+            return bytes + ' Bytes';
+        }
     }
     _onRecipient(recipient) {
         this._recipient = recipient;
         this._handleShareTargetText();
         this.$text.innerHTML = ''
+        this._pendingImageFiles = null; // 清空待发送的图片
+        this._cleanupImageUrls(); // 清理图片 URL
         this.show();
 
         const range = document.createRange();
@@ -605,11 +664,27 @@ class SendTextDialog extends Dialog {
     _send(e) {
         e.preventDefault();
         let displayName = $('displayName').innerText
-        Events.fire('send-text', {
-            to: this._recipient,
-            text: this.$text.innerText,
-            from: displayName
-        });
+        
+        // 优先检查是否有待发送的图片
+        if (this._pendingImageFiles && this._pendingImageFiles.length > 0) {
+            // 发送图片
+            Events.fire('files-selected', {
+                files: this._pendingImageFiles,
+                to: this._recipient,
+                sender: displayName
+            });
+            // 清空待发送的图片和预览
+            this._pendingImageFiles = null;
+            this._cleanupImageUrls();
+            this.$text.innerHTML = '';
+        } else {
+            // 发送文字
+            Events.fire('send-text', {
+                to: this._recipient,
+                text: this.$text.innerText,
+                from: displayName
+            });
+        }
     }
 }
 

@@ -387,9 +387,9 @@ x-dialog a {
     max-height: 300px;
     overflow-x: hidden;
     overflow-y: auto;
-    -webkit-user-select: all;
-    -moz-user-select: all;
-    user-select: all;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    user-select: text;
     white-space: pre-wrap;
 }
 
