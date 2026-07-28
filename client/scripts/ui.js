@@ -456,7 +456,6 @@ class ReceiveDialog extends Dialog {
             return
         }
         if(file.mime.split('/')[0] === 'image'){
-            console.log('the file is image, blob size:', file.blob.size);
             // Reset image preview visibility and state for new image
             const $preview = this.$el.querySelector('.preview');
             const $imgPreview = this.$el.querySelector("#img-preview");
@@ -929,7 +928,6 @@ class WebShareTargetUI {
         if (!shareTargetText) return;
         window.shareTargetText = shareTargetText;
         history.pushState({}, 'URL Rewrite', '/');
-        console.log('Shared Target Text:', '"' + shareTargetText + '"');
     }
 }
 
