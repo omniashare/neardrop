@@ -4,10 +4,26 @@ window.isRtcSupported = !!(window.RTCPeerConnection || window.mozRTCPeerConnecti
 class ServerConnection {
 
     constructor() {
+        this._hiddenSince = 0;
         this._connect();
         Events.on('beforeunload', e => this._disconnect());
         Events.on('pagehide', e => this._disconnect());
+        Events.on('network-online', e => this._reconnect());
         document.addEventListener('visibilitychange', e => this._onVisibilityChange());
+    }
+
+    // Force a fresh signaling connection (used when the browser comes back
+    // online). Re-opening the socket makes the server re-send the peer list, so
+    // devices re-appear and RTC connections are renegotiated from scratch.
+    _reconnect() {
+        console.log('WS: network back online, forcing fresh signaling connection');
+        if (this._socket) {
+            this._socket.onclose = null;
+            try { this._socket.close(); } catch (e) {}
+        }
+        this._socket = null; 
+        clearTimeout(this._reconnectTimer);
+        this._connect();
     }
 
     _connect() {
@@ -16,10 +32,13 @@ class ServerConnection {
         const lastDisplayName = localStorage.getItem('displayname')
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
-        //const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-       const ws = lastDisplayName ?new WebSocket('ws://localhost:3000/server/webrtc?lastDisplayName='+encodeURIComponent(lastDisplayName)+'&room='+encodeURIComponent(roomid)):new WebSocket('ws://localhost:3000/server/webrtc?room='+encodeURIComponent(roomid))
+        const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
+       //const ws = lastDisplayName ?new WebSocket('ws://localhost:3000/server/webrtc?lastDisplayName='+encodeURIComponent(lastDisplayName)+'&room='+encodeURIComponent(roomid)):new WebSocket('ws://localhost:3000/server/webrtc?room='+encodeURIComponent(roomid))
         ws.binaryType = 'arraybuffer';
-        ws.onopen = e => console.log('WS: server connected');
+        ws.onopen = e => {
+            console.log('WS: server connected');
+            Events.fire('notify-user-hide'); // dismiss the persistent "offline" banner on reconnect
+        };
         ws.onmessage = e => this._onMessage(e.data);
         ws.onclose = e => this._onDisconnect();
         ws.onerror = e => console.error(e);
@@ -87,14 +106,28 @@ class ServerConnection {
 
     _onDisconnect() {
         console.log('WS: server disconnected');
-        Events.fire('notify-user', jQuery.i18n.prop('notify_connection_lost'));
+        // Keep the "You are offline" banner visible until we reconnect, and clear
+        // the discoverable-device list since those peers are no longer reachable.
+        Events.fire('notify-user-persist', jQuery.i18n.prop('notify_offline'));
+        Events.fire('clear-peers');
+        console.log("断开连接，清除设备")
         clearTimeout(this._reconnectTimer);
         this._reconnectTimer = setTimeout(_ => this._connect(), 5000);
     }
 
     _onVisibilityChange() {
-        if (document.hidden) return;
-        this._connect();
+        if (document.hidden) {
+            this._hiddenSince = Date.now();
+            return;
+        }
+        const hiddenMs = this._hiddenSince ? Date.now() - this._hiddenSince : 0;
+        this._hiddenSince = 0;
+        // If the signaling socket died while hidden, reconnect.
+        if (!this._isConnected()) { this._connect(); return; }
+        // A tab backgrounded for a while may have been frozen by the browser, so
+        // its peer connections can be silently dead even though the socket looks
+        // open. Force a fresh signaling connection to rebuild everything.
+        if (hiddenMs > 10000) this._reconnect();
     }
 
     _isConnected() {
@@ -326,22 +359,25 @@ class Peer {
 
 class RTCPeer extends Peer {
 
-    constructor(serverConnection, peerId, peerDisplayname) {
+    constructor(serverConnection, peerId, peerDisplayname, isCaller = true) {
         super(serverConnection, peerId, peerDisplayname);
         this._sendQueue = [];
         this._isSendPaused = false;
         this._bufferedAmountLowThreshold = 1024 * 1024; // 1MB
         if (!peerId) return;
-        this._connect(peerId, true);
+        // Only the caller initiates the offer. A callee (peer created because an
+        // incoming signal arrived) must wait for that offer instead of creating
+        // its own, otherwise both sides createOffer() and setRemoteDescription()
+        // fails with "Called in wrong state: stable" (WebRTC glare).
+        if (isCaller) this._connect(peerId, true);
     }
 
     _connect(peerId, isCaller) {
-        if (this._conn && this._conn.signalingState === 'closed') {
-            console.log('RTC: Connection is closed, creating new connection');
-            this._conn = null;
-        }
-        
-        if (!this._conn) this._openConnection(peerId, isCaller);
+        // Always (re)negotiate on a brand-new RTCPeerConnection — never re-offer on
+        // a reused one. Re-offering on a connection that already carried a
+        // negotiation throws "The order of m-lines in subsequent offer doesn't
+        // match" and permanently wedges reconnection (only a page refresh recovers).
+        this._openConnection(peerId, isCaller);
 
         if (isCaller) {
             this._openChannel();
@@ -351,7 +387,15 @@ class RTCPeer extends Peer {
     }
 
     _openConnection(peerId, isCaller) {
+        // Tear down any previous connection first so we always start clean.
+        if (this._conn) { try { this._conn.close(); } catch (e) {} }
+        this._channel = null;
         this._isCaller = isCaller;
+        // Perfect-negotiation roles: exactly one side is the caller, so use it
+        // as a stable tie-breaker. The callee is the "polite" peer that yields
+        // on a collision; the caller is "impolite" and keeps its own offer.
+        this._isPolite = !isCaller;
+        this._makingOffer = false;
         this._peerId = peerId;
         this._conn = new RTCPeerConnection(RTCPeer.config);
         this._conn.onicecandidate = e => this._onIceCandidate(e);
@@ -406,32 +450,70 @@ class RTCPeer extends Peer {
             reliable: true // Obsolete. See https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/reliable
         });
         channel.onopen = e => this._onChannelOpened(e);
-        this._conn.createOffer().then(d => this._onDescription(d)).catch(e => this._onError(e));
+        this._makingOffer = true;
+        this._conn.createOffer()
+            .then(d => this._onDescription(d))
+            .catch(e => { this._makingOffer = false; this._onError(e); });
     }
 
     _onDescription(description) {
         // description.sdp = description.sdp.replace('b=AS:30', 'b=AS:1638400');
         this._conn.setLocalDescription(description)
-            .then(_ => this._sendSignal({ sdp: description }))
-            .catch(e => this._onError(e));
+            .then(_ => { this._makingOffer = false; this._sendSignal({ sdp: description }); })
+            .catch(e => { this._makingOffer = false; this._onError(e); });
     }
 
     onServerMessage(message) {
-        if (!this._conn) this._connect(message.sender, false);
+        // (Re)build a fresh connection as the callee when we have none, or when a
+        // new offer arrives while our current connection is dead (a reconnect).
+        // Answering on a stale connection causes the "m-lines order" error.
+        const isOffer = message.sdp && message.sdp.type === 'offer';
+        const dead = this._conn && (this._conn.connectionState === 'failed' || this._conn.connectionState === 'closed' || this._conn.signalingState === 'closed');
+        if (!this._conn || (isOffer && dead)) {
+            this._connect(message.sender, false);
+        }
 
         if (message.sdp) {
-            console.log('Received SDP', message.sdp.type, 'from peer:', message.sender);
-            this._conn.setRemoteDescription(new RTCSessionDescription(message.sdp))
-                .then( _ => {
-                    if (message.sdp.type === 'offer') {
-                        return this._conn.createAnswer()
-                            .then(d => this._onDescription(d));
-                    }
-                })
+            const desc = message.sdp;
+            console.log('Received SDP', desc.type, 'from peer:', message.sender, 'in state:', this._conn.signalingState);
+
+            // --- Perfect negotiation: make renegotiation glare-safe ---
+            // Without this, an offer/answer that arrives on an already-connected
+            // ('stable') connection — reverse transfer, reconnect, or simultaneous
+            // offers — throws "Called in wrong state: stable".
+            if (desc.type === 'answer') {
+                // Only apply an answer we are actually waiting for. A late or
+                // duplicate answer while 'stable' would throw.
+                if (this._conn.signalingState !== 'have-local-offer') {
+                    console.warn('RTC: ignoring unexpected answer in state', this._conn.signalingState);
+                    return;
+                }
+                this._conn.setRemoteDescription(new RTCSessionDescription(desc))
+                    .catch(e => this._onError(e));
+                return;
+            }
+
+            // desc.type === 'offer'
+            const collision = this._makingOffer || this._conn.signalingState !== 'stable';
+            if (collision && !this._isPolite) {
+                // Impolite peer keeps its own offer and ignores the colliding one.
+                console.warn('RTC: ignoring colliding offer (impolite peer)');
+                return;
+            }
+            const prepare = collision
+                ? this._conn.setLocalDescription({ type: 'rollback' }).catch(() => {})
+                : Promise.resolve();
+            prepare
+                .then(() => this._conn.setRemoteDescription(new RTCSessionDescription(desc)))
+                .then(() => this._conn.createAnswer())
+                .then(d => this._onDescription(d))
                 .catch(e => this._onError(e));
+
         } else if (message.ice) {
             console.log('Received ICE candidate from peer:', message.sender, 'candidate:', message.ice.candidate);
-            this._conn.addIceCandidate(new RTCIceCandidate(message.ice));
+            // Ignore ICE errors: candidates for an offer we dropped are expected.
+            this._conn.addIceCandidate(new RTCIceCandidate(message.ice))
+                .catch(e => console.warn('RTC: addIceCandidate failed:', e.message));
         }
     }
 
@@ -443,20 +525,28 @@ class RTCPeer extends Peer {
         channel.bufferedAmountLowThreshold = this._bufferedAmountLowThreshold;
         channel.onbufferedamountlow = e => this._onBufferedAmountLow();
         this._channel = channel;
+        this._reconnectAttempts = 0; // healthy again
         console.log('[RTC] DataChannel opened with peer:', this._peerId);
     }
 
     _onChannelClosed() {
         console.log('RTC: channel closed', this._peerId);
+        this._channel = null;
+        // Only the caller re-initiates. Don't stack reconnects if one is running.
         if (!this._isCaller) return;
-        
-        // Only attempt to reconnect if the connection is not already closed
-        if (this._conn && this._conn.signalingState !== 'closed') {
-            console.log('RTC: Attempting to reconnect channel for', this._peerId);
-            this._connect(this._peerId, true);
-        } else {
-            console.log('RTC: Connection is closed, cannot reconnect channel for', this._peerId);
+        if (this._isConnecting()) return;
+
+        this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+        if (this._reconnectAttempts > RTCPeer.MAX_RECONNECT_ATTEMPTS) {
+            // Peer is unreachable after several tries (e.g. it stayed backgrounded
+            // or really went away): drop it from the list instead of retrying forever.
+            console.log('RTC: giving up reconnect, removing peer', this._peerId);
+            Events.fire('peer-left', this._peerId);
+            return;
         }
+        // Reconnect on a brand-new connection (see _connect / _openConnection).
+        console.log('RTC: reconnecting (attempt', this._reconnectAttempts, ') for', this._peerId);
+        this._connect(this._peerId, true);
     }
 
     _onBufferedAmountLow() {
@@ -490,10 +580,12 @@ class RTCPeer extends Peer {
         
         switch (this._conn.connectionState) {
             case 'disconnected':
-                this._onChannelClosed();
+                // May still recover on its own; don't tear it down yet. If it
+                // doesn't recover it progresses to 'failed' below.
                 break;
             case 'failed':
-                this._conn = null;
+                // Try to re-establish (fresh connection) a few times; give up and
+                // remove the peer only after repeated failures (_onChannelClosed).
                 this._onChannelClosed();
                 break;
         }
@@ -596,18 +688,41 @@ class PeersManager {
         Events.on('peer-left', e => this._onPeerLeft(e.detail));
         Events.on('peer-name',e => this._onModifyName(e.detail))
         Events.on('cancel-send',e => this._onCancelSend(e.detail))
+        Events.on('clear-peers', e => this._clearAllPeers())
+    }
+
+    // Drop every peer connection (e.g. when the server link goes down). The
+    // fresh 'peers' list on reconnect will rebuild them.
+    _clearAllPeers() {
+        Object.keys(this.peers).forEach(id => this._onPeerLeft(id));
+        this.peers = {};
     }
 
     _onMessage(message) {
         if (!this.peers[message.sender]) {
-            this.peers[message.sender] = new RTCPeer(this._server);
+            console.warn('RTC: Received signal from unknown peer:', message.sender, '- creating peer');
+            if (window.isRtcSupported) {
+                // Created in response to an incoming signal => we are the callee.
+                // Pass isCaller=false so onServerMessage() sets up the connection
+                // as the answerer instead of firing a competing offer.
+                this.peers[message.sender] = new RTCPeer(this._server, message.sender, '', false);
+            } else {
+                this.peers[message.sender] = new WSPeer(this._server, message.sender, '');
+            }
         }
-        this.peers[message.sender].onServerMessage(message);
+        // WSPeer没有onServerMessage方法，跳过信号消息
+        if (typeof this.peers[message.sender].onServerMessage === 'function') {
+            this.peers[message.sender].onServerMessage(message);
+        }
     }
 
     _onPeers(msg) {
         const peers = msg.peers;
+        const self = msg.currentPeerInfo;
         peers.forEach(peer => {
+            // Skip ourselves — a stale self-connection the server may still list
+            // right after a reconnect. Don't open an RTC connection to self.
+            if (self && JSON.stringify(peer.name) === JSON.stringify(self)) return;
             if (this.peers[peer.id]) {
                 // this.peers[peer.id].refresh();
                 // return;
@@ -638,6 +753,9 @@ class PeersManager {
             console.warn('Target peer not found for file transfer:', message.to);
             return;
         }
+        // Don't feed a file into a dead data channel (it would silently hang).
+        // Tell the user and kick off a reconnect instead.
+        if (!this._ensurePeerReady(peer)) return;
         peer.sendFiles(message.files,message.sender);
     }
 
@@ -647,7 +765,19 @@ class PeersManager {
             console.warn('Target peer not found for text message:', message.to);
             return;
         }
+        if (!this._ensurePeerReady(peer)) return;
         peer.sendText(message.text,message.from);
+    }
+
+    // Returns true if the peer's data channel is open. Otherwise notifies the user,
+    // triggers a reconnect, and returns false so the caller aborts (no silent hang).
+    _ensurePeerReady(peer) {
+        // WSPeer (fallback) has no data channel — always allow it through.
+        if (typeof peer._isConnected !== 'function') return true;
+        if (peer._isConnected()) return true;
+        Events.fire('notify-user', jQuery.i18n.prop('notify_peer_unreachable'));
+        if (typeof peer.refresh === 'function') peer.refresh();
+        return false;
     }
 
     _onPeerLeft(peerId) {
@@ -682,7 +812,13 @@ class WSPeer extends Peer {
     }
 
     _send(message) {
-        message.to = this._peerId;
+        if (typeof message === 'string') {
+            const msgObj = JSON.parse(message);
+            msgObj.to = this._peerId;
+            message = JSON.stringify(msgObj);
+        } else {
+            message.to = this._peerId;
+        }
         console.log('[WS] Sending via WebSocket to peer:', this._peerId, 'type:', typeof message === 'string' ? JSON.parse(message).type : 'binary');
         this._server.send(message);
     }
@@ -792,6 +928,7 @@ class Events {
 }
 
 
+RTCPeer.MAX_RECONNECT_ATTEMPTS = 5;
 RTCPeer.config = {
     'sdpSemantics': 'unified-plan',
     'iceServers': [

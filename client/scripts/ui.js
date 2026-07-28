@@ -10,6 +10,10 @@ Events.on('display-name', e => {
     const $displayName = $('displayName')
     $displayName.textContent = me.displayName
     $displayName.title = me.deviceName;
+    // Persist our name so a reconnect reuses the same identity. Otherwise the
+    // server hands out a fresh (id-seeded) name and our previous, still-lingering
+    // connection shows up as a separate "device" until the server cleans it up.
+    if (me.displayName) localStorage.setItem('displayname', me.displayName);
 });
 let imageRetryCount = 0;
 const maxImageRetries = 3;
@@ -94,17 +98,41 @@ class PeersUI {
         Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
         Events.on('close-progress',e => this._closeProgress(e.detail))
         Events.on('clear-cancel',e => this._clearCancel(e.detail))
+        Events.on('clear-peers', e => this._clearPeers()) // wipe device list on disconnect
         this._currentPeerInfo = null; // Store current peer info for same-device detection
     }
 
     _onPeerJoined(peer) {
-        if(this._currentPeerInfo && JSON.stringify(peer.name) == JSON.stringify(this._currentPeerInfo)){
-            Events.fire('notify-user', jQuery.i18n.prop('same_notice'));
+        // Never list ourselves. On reconnect the server may still briefly hold our
+        // previous connection in the room; it carries our own identity, so filter
+        // it out instead of showing a phantom "self" device.
+        if (this._currentPeerInfo && JSON.stringify(peer.name) === JSON.stringify(this._currentPeerInfo)) {
+            return;
         }
         if ($(peer.id)) return; // peer already exists
+        // De-dupe by identity: the same device reconnecting gets a NEW id but keeps
+        // its display name, while its previous (stale) connection may still linger
+        // in the room. Drop any stale element for the same device before adding the
+        // fresh one, so a device never appears twice.
+        this._removeStaleByName(peer);
         const peerUI = new PeerUI(peer);
         $$('x-peers').appendChild(peerUI.$el);
-        setTimeout(e => window.animateBackground(false), 1750); // Stop animation
+        // Stop the background animation once a peer appears. Guard the call: it is
+        // only defined after the window 'load' handler runs, which may be later
+        // than this timeout fires.
+        setTimeout(e => { if (typeof window.animateBackground === 'function') window.animateBackground(false); }, 1750);
+    }
+
+    // Remove any already-listed device that shares this peer's display name but has
+    // a different id (a leftover connection from before a reconnect).
+    _removeStaleByName(peer) {
+        const name = peer.name && peer.name.displayName;
+        if (!name) return;
+        $$('x-peers').querySelectorAll('x-peer').forEach(el => {
+            if (el.id === peer.id) return;
+            const existing = el.ui && el.ui._peer && el.ui._peer.name && el.ui._peer.name.displayName;
+            if (existing === name) el.remove();
+        });
     }
     //peer modify name 
     _onPeerModifyName(peer) {
@@ -730,13 +758,39 @@ class ReceiveTextDialog extends Dialog {
 class Toast extends Dialog {
     constructor() {
         super('toast');
+        this._persistMessage = null; // sticky message kept visible until cleared
         Events.on('notify-user', e => this._onNotfiy(e.detail));
+        Events.on('notify-user-persist', e => this._onPersist(e.detail));
+        Events.on('notify-user-hide', e => this._onHidePersist());
     }
 
     _onNotfiy(message) {
+        clearTimeout(this._hideTimer);
         this.$el.textContent = message;
         this.show();
-        setTimeout(_ => this.hide(), 3000);
+        this._hideTimer = setTimeout(_ => {
+            // A sticky message (e.g. "You are offline") must reassert itself
+            // after a transient toast, instead of hiding the toast entirely.
+            if (this._persistMessage) {
+                this.$el.textContent = this._persistMessage;
+            } else {
+                this.hide();
+            }
+        }, 3000);
+    }
+
+    // Show a message that stays until _onHidePersist() is called.
+    _onPersist(message) {
+        clearTimeout(this._hideTimer);
+        this._persistMessage = message;
+        this.$el.textContent = message;
+        this.show();
+    }
+
+    _onHidePersist() {
+        clearTimeout(this._hideTimer);
+        this._persistMessage = null;
+        this.hide();
     }
 }
 
@@ -846,10 +900,16 @@ class NetworkStatusUI {
     }
 
     _showOfflineMessage() {
-        Events.fire('notify-user', jQuery.i18n.prop('notify_offline'));
+        // Clear the (now-stale) device list first so it happens even if the i18n
+        // lookup below were to fail, then keep the banner up until we're back online.
+        Events.fire('clear-peers');
+        Events.fire('notify-user-persist', jQuery.i18n.prop('notify_offline'));
     }
 
     _showOnlineMessage() {
+        Events.fire('notify-user-hide');
+        // Refresh the signaling connection so discoverable devices come back.
+        Events.fire('network-online');
         Events.fire('notify-user', jQuery.i18n.prop('notify_online'));
     }
 }

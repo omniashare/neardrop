@@ -1,4 +1,4 @@
-var CACHE_NAME = 'snapdrop-cache-v2';
+var CACHE_NAME = 'snapdrop-cache-v3';
 var urlsToCache = [
   'index.html',
   './',
@@ -12,6 +12,9 @@ var urlsToCache = [
 ];
 
 self.addEventListener('install', function(event) {
+  // Activate the updated worker immediately instead of waiting for all
+  // old tabs to close — otherwise code changes never reach an open page.
+  self.skipWaiting();
   // Perform install steps
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -24,16 +27,23 @@ self.addEventListener('install', function(event) {
 
 
 self.addEventListener('fetch', function(event) {
+  // Network-first, falling back to cache. Cache-first served stale JS and
+  // kept code fixes from ever loading; network-first always delivers the
+  // latest scripts while still working offline via the cache fallback.
   event.respondWith(
-    caches.match(event.request)
+    fetch(event.request)
       .then(function(response) {
-        // Cache hit - return response
-        if (response) {
-          return response;
+        if (response && response.ok && event.request.method === 'GET') {
+          var copy = response.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(event.request, copy);
+          });
         }
-        return fetch(event.request);
-      }
-    )
+        return response;
+      })
+      .catch(function() {
+        return caches.match(event.request);
+      })
   );
 });
 
@@ -52,6 +62,10 @@ self.addEventListener('activate', function(event) {
           return caches.delete(cacheName);
         })
       );
+    }).then(function() {
+      // Take control of already-open pages so the new worker (and fresh
+      // scripts) apply without needing every tab to be closed first.
+      return self.clients.claim();
     })
   );
 });
