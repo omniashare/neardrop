@@ -199,6 +199,7 @@ class Peer {
     }
     _sendFile(file,sender) {
         if(!file) return
+        this._markTransferActivity(); // start the stall watchdog for this transfer
         const iceInfo = this.getIceCandidateInfo();
         this.sendJSON({
             type: 'header',
@@ -229,6 +230,7 @@ class Peer {
             this._chunker = null;
             // Reset sender state for next file
             this._busy = false;
+            this._stopTransferWatchdog();
             this._dequeueFile(); // Continue with next file in queue
         } else {
             // Send partition info and wait for acknowledgment
@@ -242,6 +244,7 @@ class Peer {
 
     _sendNextPartition() {
         if (!this._chunker || this._chunker.isFileEnd() || this._cancel) return;
+        this._markTransferActivity(); // ack received => transfer is progressing
         this._chunker.nextPartition();
     }
 
@@ -301,7 +304,7 @@ class Peer {
 
     _onChunkReceived(chunk) {
         if(!chunk.byteLength) return;
-        
+        this._markTransferActivity(); // data arriving => receive transfer is progressing
         this._digester.unchunk(chunk);
         const progress = this._digester.progress;
         this._onDownloadProgress(progress);
@@ -317,6 +320,8 @@ class Peer {
     }
 
     _onFileReceived(proxyFile,sender) {
+        this._digester = null;
+        this._stopTransferWatchdog();
         Events.fire('file-received', {file:proxyFile, sender:sender});
         Events.fire('clear-cancel', {recipient: this._peerId});
         this.sendJSON({ type: 'transfer-complete' ,sender: sender});
@@ -350,8 +355,13 @@ class RTCPeer extends Peer {
     constructor(serverConnection, peerId, peerDisplayname, isCaller = true) {
         super(serverConnection, peerId, peerDisplayname);
         this._sendQueue = [];
-        this._isSendPaused = false;
-        this._bufferedAmountLowThreshold = 1024 * 1024; // 1MB
+        this._flushWatchdog = null;
+        this._transferWatchdog = null;     // detects a stalled/failed transfer
+        this._lastTransferActivity = 0;
+        // Keep this well BELOW the 1MB partition size so the send buffer never sits
+        // right at the limit (which made the transfer depend on a single, sometimes-
+        // missed 'bufferedamountlow' event and freeze mid-file).
+        this._bufferedAmountLowThreshold = 256 * 1024; // 256KB
         if (!peerId) return;
         // Only the caller initiates the offer. A callee (peer created because an
         // incoming signal arrived) must wait for that offer instead of creating
@@ -509,6 +519,15 @@ class RTCPeer extends Peer {
     _onChannelClosed() {
         console.log('RTC: channel closed', this._peerId);
         this._channel = null;
+        // Stop the flush watchdog and drop any half-sent queue so a later transfer
+        // doesn't inherit stale chunks.
+        this._clearFlushWatchdog();
+        this._sendQueue = [];
+        // If a file was mid-transfer, the connection just died under it — the
+        // reconnect starts fresh and can't resume, so report the failure now.
+        if (this._isTransferInProgress()) {
+            this._transferFailed('connection lost');
+        }
         // Only the caller re-initiates. Don't stack reconnects if one is running.
         if (!this._isCaller) return;
         if (this._isConnecting()) return;
@@ -527,25 +546,7 @@ class RTCPeer extends Peer {
     }
 
     _onBufferedAmountLow() {
-        this._isSendPaused = false;
-        
-        // Send queued messages
-        while (this._sendQueue.length > 0 && !this._isSendPaused) {
-            const message = this._sendQueue.shift();
-            if (this._channel.bufferedAmount > this._bufferedAmountLowThreshold) {
-                this._sendQueue.unshift(message); // Put it back
-                this._isSendPaused = true;
-                break;
-            }
-            
-            try {
-                this._channel.send(message);
-            } catch (e) {
-                console.error('RTC: send error while flushing queue', e);
-                this.refresh();
-                break;
-            }
-        }
+        this._flushSendQueue();
     }
 
     _onConnectionStateChange(e) {
@@ -592,20 +593,100 @@ class RTCPeer extends Peer {
 
     _send(message) {
         if (!this._channel) return this.refresh();
-        
-        // Check if we need to pause sending
-        if (this._channel.bufferedAmount > this._bufferedAmountLowThreshold) {
-            this._sendQueue.push(message);
-            this._isSendPaused = true;
-            return;
+        // Single ordered path: always enqueue, then drain as the buffer allows.
+        // Keeps data chunks and control messages (header/partition/complete) in order.
+        this._sendQueue.push(message);
+        this._flushSendQueue();
+    }
+
+    // Drains the send queue while the buffer has room. Driven by _send(), by the
+    // 'bufferedamountlow' event, and by a watchdog — so a single missed event can
+    // no longer wedge the transfer.
+    _flushSendQueue() {
+        if (!this._channel || this._channel.readyState !== 'open') return;
+        while (this._sendQueue.length > 0) {
+            if (this._channel.bufferedAmount > this._bufferedAmountLowThreshold) {
+                // Buffer is full: wait for it to drain. Arm a watchdog in case the
+                // 'bufferedamountlow' event never fires (a known Chromium flake).
+                this._armFlushWatchdog();
+                return;
+            }
+            const message = this._sendQueue.shift();
+            try {
+                this._channel.send(message);
+            } catch (e) {
+                console.error('RTC: send error', e);
+                this._sendQueue.unshift(message);
+                this.refresh();
+                return;
+            }
         }
-        
-        try {
-            this._channel.send(message);
-        } catch (e) {
-            console.error('RTC: send error', e);
-            this.refresh();
+        this._clearFlushWatchdog();
+    }
+
+    _armFlushWatchdog() {
+        if (this._flushWatchdog) return;
+        this._flushWatchdog = setInterval(() => {
+            if (!this._channel || this._channel.readyState !== 'open') {
+                this._clearFlushWatchdog();
+                return;
+            }
+            if (this._channel.bufferedAmount <= this._bufferedAmountLowThreshold) {
+                this._flushSendQueue();
+            }
+        }, 200);
+    }
+
+    _clearFlushWatchdog() {
+        if (this._flushWatchdog) {
+            clearInterval(this._flushWatchdog);
+            this._flushWatchdog = null;
         }
+    }
+
+    // ---- Transfer stall/failure detection ----
+    _isTransferInProgress() {
+        const sending = !!this._chunker;
+        const receiving = !!(this._digester && this._digester._bytesReceived < this._digester._size);
+        return sending || receiving;
+    }
+
+    // Called whenever a transfer makes progress (file start, partition ack, chunk
+    // received). Refreshes the deadline and (re)arms the stall watchdog.
+    _markTransferActivity() {
+        this._lastTransferActivity = Date.now();
+        if (this._transferWatchdog) return;
+        this._transferWatchdog = setInterval(() => {
+            if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
+            if (Date.now() - this._lastTransferActivity > RTCPeer.TRANSFER_STALL_TIMEOUT) {
+                this._transferFailed('stalled (no progress)');
+            }
+        }, 2000);
+    }
+
+    _stopTransferWatchdog() {
+        if (this._transferWatchdog) {
+            clearInterval(this._transferWatchdog);
+            this._transferWatchdog = null;
+        }
+    }
+
+    // Abort the current transfer, reset send/receive state, clear the progress UI
+    // and tell the user it failed.
+    _transferFailed(reason) {
+        if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
+        console.warn('RTC: transfer failed -', reason, this._peerId);
+        this._stopTransferWatchdog();
+        // reset sender state
+        this._chunker = null;
+        this._busy = false;
+        this._filesQueue = [];
+        // reset receiver state
+        this._digester = null;
+        this._lastProgress = 0;
+        // reset the progress ring and notify the user
+        Events.fire('close-progress', { sender: this._peerId, recipient: this._peerId });
+        Events.fire('notify-user', jQuery.i18n.prop('notify_transfer_failed'));
     }
 
     _sendSignal(signal) {
@@ -882,6 +963,7 @@ class Events {
 }
 
 RTCPeer.MAX_RECONNECT_ATTEMPTS = 5;
+RTCPeer.TRANSFER_STALL_TIMEOUT = 30000; // ms with no progress => transfer failed
 RTCPeer.config = {
     'sdpSemantics': 'unified-plan',
     'iceServers': [
