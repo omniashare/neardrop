@@ -356,7 +356,13 @@ class Peer {
         if (request.peerId) {
             this.id = request.peerId;
         } else {
-            this.id = request.headers.cookie.replace('peerid=', '');
+            // Extract ONLY the peerid cookie value. The raw Cookie header also
+            // carries analytics cookies (_ga, _ga_*) whose values change between
+            // requests; a naive replace('peerid=','') left them attached, so the
+            // same device produced a different id each time and looked like many
+            // peers — causing a DataChannel open/close/reconnect storm.
+            const match = /(?:^|;\s*)peerid=([^;]+)/.exec(request.headers.cookie || '');
+            this.id = match ? match[1] : Peer.uuid();
         }
     }
 

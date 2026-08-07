@@ -513,11 +513,9 @@ class RTCPeer extends Peer {
         channel.onbufferedamountlow = e => this._onBufferedAmountLow();
         this._channel = channel;
         this._reconnectAttempts = 0; // healthy again
-        console.log('[RTC] DataChannel opened with peer:', this._peerId);
     }
 
     _onChannelClosed() {
-        console.log('RTC: channel closed', this._peerId);
         this._channel = null;
         // Stop the flush watchdog and drop any half-sent queue so a later transfer
         // doesn't inherit stale chunks.
@@ -536,12 +534,10 @@ class RTCPeer extends Peer {
         if (this._reconnectAttempts > RTCPeer.MAX_RECONNECT_ATTEMPTS) {
             // Peer is unreachable after several tries (e.g. it stayed backgrounded
             // or really went away): drop it from the list instead of retrying forever.
-            console.log('RTC: giving up reconnect, removing peer', this._peerId);
             Events.fire('peer-left', this._peerId);
             return;
         }
         // Reconnect on a brand-new connection (see _connect / _openConnection).
-        console.log('RTC: reconnecting (attempt', this._reconnectAttempts, ') for', this._peerId);
         this._connect(this._peerId, true);
     }
 
@@ -736,7 +732,6 @@ class PeersManager {
 
     _onMessage(message) {
         if (!this.peers[message.sender]) {
-            console.warn('RTC: Received signal from unknown peer:', message.sender, '- creating peer');
             if (window.isRtcSupported) {
                 // Created in response to an incoming signal => we are the callee.
                 // Pass isCaller=false so onServerMessage() sets up the connection
