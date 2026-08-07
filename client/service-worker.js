@@ -33,11 +33,14 @@ self.addEventListener('fetch', function(event) {
   event.respondWith(
     fetch(event.request)
       .then(function(response) {
-        if (response && response.ok && event.request.method === 'GET') {
+        // Only cache complete (status 200) GET responses. The Cache API rejects
+        // partial (206) responses — e.g. Range requests for media like blop.mp3 —
+        // which otherwise throws "Partial response (206) is unsupported".
+        if (response && response.status === 200 && event.request.method === 'GET') {
           var copy = response.clone();
           caches.open(CACHE_NAME).then(function(cache) {
             cache.put(event.request, copy);
-          });
+          }).catch(function(){ /* ignore cache write failures */ });
         }
         return response;
       })
