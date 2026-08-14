@@ -19,7 +19,6 @@ self.addEventListener('install', function(event) {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(function(cache) {
-        console.log('Opened cache');
         return cache.addAll(urlsToCache);
       })
   );
@@ -45,7 +44,13 @@ self.addEventListener('fetch', function(event) {
         return response;
       })
       .catch(function() {
-        return caches.match(event.request);
+        // Network failed: fall back to cache. caches.match() resolves to
+        // undefined when there is no cached copy, and respondWith(undefined)
+        // throws "Failed to convert value to 'Response'" — so always return a
+        // real Response (the cached one, or a network-error Response).
+        return caches.match(event.request).then(function(cached) {
+          return cached || Response.error();
+        });
       })
   );
 });

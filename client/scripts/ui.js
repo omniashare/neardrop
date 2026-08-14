@@ -403,12 +403,8 @@ class ReceiveDialog extends Dialog {
             this._nextFile(e.detail.file, e.detail.sender);
             // Try to play sound, but handle autoplay restrictions gracefully
             try {
-                window.blop.play().catch(error => {
-                    console.log('Audio play failed due to browser autoplay policy:', error.message);
-                });
-            } catch (error) {
-                console.log('Audio play error:', error.message);
-            }
+                window.blop.play().catch(error => {});
+            } catch (error) {}
         });
         this._filesQueue = [];
         this._currentSender = null;
@@ -740,12 +736,8 @@ class ReceiveTextDialog extends Dialog {
         this.show();
         // Try to play sound, but handle autoplay restrictions gracefully
         try {
-            window.blop.play().catch(error => {
-                console.log('Audio play failed due to browser autoplay policy:', error.message);
-            });
-        } catch (error) {
-            console.log('Audio play error:', error.message);
-        }
+            window.blop.play().catch(error => {});
+        } catch (error) {}
     }
 
     async _onCopy() {
@@ -958,7 +950,6 @@ const snapdrop = new Snapdrop();
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/service-worker.js')
         .then(serviceWorker => {
-            console.log('Service Worker registered');
             window.serviceWorker = serviceWorker
         });
 }
@@ -1050,10 +1041,6 @@ document.body.onclick = e => { // safari hack to fix audio
     document.body.onclick = null;
     if (!(/.*Version.*Safari.*/.test(navigator.userAgent))) return;
     try {
-        blop.play().catch(error => {
-            console.log('Safari audio hack failed:', error.message);
-        });
-    } catch (error) {
-        console.log('Safari audio hack error:', error.message);
-    }
+        blop.play().catch(error => {});
+    } catch (error) {}
 }

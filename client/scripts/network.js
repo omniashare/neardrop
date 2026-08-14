@@ -5,6 +5,7 @@ class ServerConnection {
 
     constructor() {
         this._hiddenSince = 0;
+        this._lastReconnect = 0;
         this._connect();
         Events.on('beforeunload', e => this._disconnect());
         Events.on('pagehide', e => this._disconnect());
@@ -16,12 +17,20 @@ class ServerConnection {
     // online). Re-opening the socket makes the server re-send the peer list, so
     // devices re-appear and RTC connections are renegotiated from scratch.
     _reconnect() {
-        console.log('WS: network back online, forcing fresh signaling connection');
+        // Debounce: the browser's online/offline and visibilitychange events can
+        // fire in bursts. Without this guard each burst tears the socket down and
+        // reopens it, which thrashes the connection ("WebSocket is closed before
+        // the connection is established") and triggers a storm of RTC renegotiation.
+        if (this._isConnecting()) return;            // an attempt is already underway
+        const now = Date.now();
+        if (this._lastReconnect && now - this._lastReconnect < 3000) return; // at most once / 3s
+        this._lastReconnect = now;
+
         if (this._socket) {
             this._socket.onclose = null;
             try { this._socket.close(); } catch (e) {}
         }
-        this._socket = null; 
+        this._socket = null;
         clearTimeout(this._reconnectTimer);
         this._connect();
     }
@@ -32,16 +41,15 @@ class ServerConnection {
         const lastDisplayName = localStorage.getItem('displayname')
         const roomid = localStorage.getItem('roomnumber')?localStorage.getItem('roomnumber'):''
         Events.fire('room-display',roomid)
-        const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
-       //const ws = lastDisplayName ?new WebSocket('ws://localhost:3000/server/webrtc?lastDisplayName='+encodeURIComponent(lastDisplayName)+'&room='+encodeURIComponent(roomid)):new WebSocket('ws://localhost:3000/server/webrtc?room='+encodeURIComponent(roomid))
+        //const ws = lastDisplayName ? new WebSocket(this._endpoint()+'?lastDisplayName='+lastDisplayName+'&room='+roomid) : new WebSocket(this._endpoint()+'?room='+roomid)
+       const ws = lastDisplayName ?new WebSocket('ws://localhost:3000/server/webrtc?lastDisplayName='+encodeURIComponent(lastDisplayName)+'&room='+encodeURIComponent(roomid)):new WebSocket('ws://localhost:3000/server/webrtc?room='+encodeURIComponent(roomid))
         ws.binaryType = 'arraybuffer';
         ws.onopen = e => {
-            console.log('WS: server connected');
-            Events.fire('notify-user-hide'); // dismiss the persistent "offline" banner on reconnect
+            Events.fire('notify-user-hide');
         };
         ws.onmessage = e => this._onMessage(e.data);
         ws.onclose = e => this._onDisconnect();
-        ws.onerror = e => console.error(e);
+        ws.onerror = e => {};
         this._socket = ws;
     }
 
@@ -49,8 +57,7 @@ class ServerConnection {
         try {
             msg = JSON.parse(msg);
         } catch (e) {
-            console.error('Failed to parse WebSocket message:', e, msg);
-            return; // Skip malformed message
+            return;
         }
         
         switch (msg.type) {
@@ -77,7 +84,7 @@ class ServerConnection {
                 Events.fire('peer-modify-name', msg.peer);
                 break;
             default:
-                console.error('WS: unkown message type', msg);
+                break;
         }
     }
 
@@ -101,7 +108,6 @@ class ServerConnection {
     }
 
     _onDisconnect() {
-        console.log('WS: server disconnected');
         // Keep the "You are offline" banner visible until we reconnect, and clear
         // the discoverable-device list since those peers are no longer reachable.
         Events.fire('notify-user-persist', jQuery.i18n.prop('notify_offline'));
@@ -225,12 +231,14 @@ class Peer {
 
     _onPartitionEnd(offset) {
         if (this._chunker && this._chunker.isFileEnd()) {
-            // File is completely sent, notify completion
+            // All bytes are queued. Tell the receiver, but keep the transfer marked
+            // in-progress (awaiting confirmation) so that if delivery of these last
+            // buffered/in-flight bytes fails, the stall watchdog still catches it.
             this.sendJSON({ type: 'transfer-complete', sender: this._currentSender });
             this._chunker = null;
-            // Reset sender state for next file
             this._busy = false;
-            this._stopTransferWatchdog();
+            this._awaitingComplete = true;
+            this._markTransferActivity(); // keep the watchdog alive until confirmed
             this._dequeueFile(); // Continue with next file in queue
         } else {
             // Send partition info and wait for acknowledgment
@@ -280,6 +288,11 @@ class Peer {
             case 'transfer-complete':
                 this._onTransferCompleted(sender);
                 break;
+            case 'transfer-failed':
+                // The other side reported the transfer failed; abort locally too
+                // (don't echo the notification back — false to avoid a ping-pong).
+                this._transferFailed('remote reported failure', false);
+                break;
             case 'cancel-send':
                 Events.fire('close-progress', {recipient: this._peerId});
                 break;
@@ -303,9 +316,12 @@ class Peer {
     }
 
     _onChunkReceived(chunk) {
-        if(!chunk.byteLength) return;
+        if(!chunk.byteLength || !this._digester) return;
         this._markTransferActivity(); // data arriving => receive transfer is progressing
         this._digester.unchunk(chunk);
+        // unchunk() may have completed the file and cleared _digester via its
+        // callback (_onFileReceived). If so, we're done — nothing left to report.
+        if (!this._digester) return;
         const progress = this._digester.progress;
         this._onDownloadProgress(progress);
 
@@ -331,6 +347,10 @@ class Peer {
         this._onDownloadProgress(1);
         this._reader = null;
         this._busy = false;
+        // Confirmation arrived: the transfer really landed. Clear the awaiting flag
+        // and stop the stall watchdog (unless another file is still going out).
+        this._awaitingComplete = false;
+        if (!this._isTransferInProgress()) this._stopTransferWatchdog();
         // Receiver doesn't need to dequeue files - that's sender's responsibility
         Events.fire('notify-user', jQuery.i18n.prop('transfer_completed_toast'));
     }
@@ -358,6 +378,7 @@ class RTCPeer extends Peer {
         this._flushWatchdog = null;
         this._transferWatchdog = null;     // detects a stalled/failed transfer
         this._lastTransferActivity = 0;
+        this._awaitingComplete = false;    // sender finished pushing bytes, waiting for the receiver's confirmation
         // Keep this well BELOW the 1MB partition size so the send buffer never sits
         // right at the limit (which made the transfer depend on a single, sometimes-
         // missed 'bufferedamountlow' event and freeze mid-file).
@@ -430,7 +451,6 @@ class RTCPeer extends Peer {
     _openChannel() {
         // Check if connection is still open before creating data channel
         if (!this._conn || this._conn.signalingState === 'closed') {
-            console.warn('RTC: Cannot create data channel - connection is closed');
             return;
         }
         
@@ -473,7 +493,6 @@ class RTCPeer extends Peer {
                 // Only apply an answer we are actually waiting for. A late or
                 // duplicate answer while 'stable' would throw.
                 if (this._conn.signalingState !== 'have-local-offer') {
-                    console.warn('RTC: ignoring unexpected answer in state', this._conn.signalingState);
                     return;
                 }
                 this._conn.setRemoteDescription(new RTCSessionDescription(desc))
@@ -485,7 +504,6 @@ class RTCPeer extends Peer {
             const collision = this._makingOffer || this._conn.signalingState !== 'stable';
             if (collision && !this._isPolite) {
                 // Impolite peer keeps its own offer and ignores the colliding one.
-                console.warn('RTC: ignoring colliding offer (impolite peer)');
                 return;
             }
             const prepare = collision
@@ -500,7 +518,7 @@ class RTCPeer extends Peer {
         } else if (message.ice) {
             // Ignore ICE errors: candidates for an offer we dropped are expected.
             this._conn.addIceCandidate(new RTCIceCandidate(message.ice))
-                .catch(e => console.warn('RTC: addIceCandidate failed:', e.message));
+                .catch(e => {});
         }
     }
 
@@ -563,7 +581,6 @@ class RTCPeer extends Peer {
     _onIceConnectionStateChange() {
         switch (this._conn.iceConnectionState) {
             case 'failed':
-                console.error('ICE failed for peer:', this._peerId, 'state:', this._conn.iceConnectionState);
                 break;
             case 'connected':
                 break;
@@ -611,7 +628,6 @@ class RTCPeer extends Peer {
             try {
                 this._channel.send(message);
             } catch (e) {
-                console.error('RTC: send error', e);
                 this._sendQueue.unshift(message);
                 this.refresh();
                 return;
@@ -642,7 +658,10 @@ class RTCPeer extends Peer {
 
     // ---- Transfer stall/failure detection ----
     _isTransferInProgress() {
-        const sending = !!this._chunker;
+        // "sending" stays true after the last byte is queued until the receiver
+        // confirms it got everything — bytes may still be buffered/in-flight, so a
+        // failure in that window must still be caught.
+        const sending = !!this._chunker || this._awaitingComplete;
         const receiving = !!(this._digester && this._digester._bytesReceived < this._digester._size);
         return sending || receiving;
     }
@@ -669,12 +688,19 @@ class RTCPeer extends Peer {
 
     // Abort the current transfer, reset send/receive state, clear the progress UI
     // and tell the user it failed.
-    _transferFailed(reason) {
+    _transferFailed(reason, notifyPeer = true) {
         if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
         console.warn('RTC: transfer failed -', reason, this._peerId);
         this._stopTransferWatchdog();
+        // Best-effort: tell the other side so it also aborts and shows the failure,
+        // instead of waiting out its own 30s stall timeout. If the channel is dead
+        // this simply no-ops and each side falls back to its own watchdog.
+        if (notifyPeer && this._channel && this._channel.readyState === 'open') {
+            try { this._channel.send(JSON.stringify({ type: 'transfer-failed' })); } catch (e) {}
+        }
         // reset sender state
         this._chunker = null;
+        this._awaitingComplete = false;
         this._busy = false;
         this._filesQueue = [];
         // reset receiver state
@@ -772,7 +798,6 @@ class PeersManager {
     sendTo(peerId, message) {
         const peer = this.peers[peerId];
         if (!peer) {
-            console.warn('Peer not found:', peerId);
             return;
         }
         peer.send(message);
@@ -781,7 +806,6 @@ class PeersManager {
     _onFilesSelected(message) {
         const peer = this.peers[message.to];
         if (!peer) {
-            console.warn('Target peer not found for file transfer:', message.to);
             return;
         }
         // Don't feed a file into a dead data channel (it would silently hang).
@@ -793,7 +817,6 @@ class PeersManager {
     _onSendText(message) {
         const peer = this.peers[message.to];
         if (!peer) {
-            console.warn('Target peer not found for text message:', message.to);
             return;
         }
         if (!this._ensurePeerReady(peer)) return;
@@ -828,7 +851,6 @@ class PeersManager {
     _onCancelSend(message) {
         const peer = this.peers[message.to];
         if (!peer) {
-            console.warn('Target peer not found for cancel send:', message.to);
             return;
         }
         peer.cancelSend()
