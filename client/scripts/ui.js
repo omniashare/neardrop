@@ -96,6 +96,7 @@ class PeersUI {
         Events.on('file-progress', e => this._onFileProgress(e.detail));
         Events.on('paste', e => this._onPaste(e));
         Events.on('peer-modify-name', e => this._onPeerModifyName(e.detail));
+        Events.on('transfer-started', e => this._onTransferStarted(e.detail))
         Events.on('close-progress',e => this._closeProgress(e.detail))
         Events.on('clear-cancel',e => this._clearCancel(e.detail))
         Events.on('clear-peers', e => this._clearPeers()) // wipe device list on disconnect
@@ -158,6 +159,13 @@ class PeersUI {
         const $peer = $(peerId);
         if (!$peer) return;
         $peer.ui.setProgress(progress.progress);
+    }
+
+    _onTransferStarted(message) {
+        const peerId = message.sender || message.recipient;
+        const $peer = $(peerId);
+        if (!$peer) return;
+        $peer.ui.showCancel();
     }
 
     _closeProgress(message){
@@ -283,8 +291,9 @@ class PeerUI {
         this._hasCancel = false;
         // Reset progress for new transfer
         this.setProgress(0);
-        // Show cancel button
-        this.$el.querySelector('.cancel-transfer').style.display = "block"
+        // The cancel button is NOT shown here: nothing has been sent yet, and if
+        // the peer turns out to be unreachable it would sit there with a dead 0%
+        // ring. 'transfer-started' puts it up once bytes are actually going out.
         Events.fire('files-selected', {
             files: files,
             to: this._peer.id,
@@ -315,6 +324,12 @@ class PeerUI {
         this.$el.removeAttribute('transfer');
         this.$el.querySelector('.cancel-transfer').style.display = "none"
         this._hasCancel = true; // Match closeProgress behavior
+    }
+    // Called once the sender has actually started pushing bytes, not when the file
+    // was merely picked.
+    showCancel() {
+        this._hasCancel = false;
+        this.$el.querySelector('.cancel-transfer').style.display = "block";
     }
     clearCancel() {
         this._hasCancel = false

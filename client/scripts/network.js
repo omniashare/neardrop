@@ -21,11 +21,15 @@ class ServerConnection {
         // fire in bursts. Without this guard each burst tears the socket down and
         // reopens it, which thrashes the connection ("WebSocket is closed before
         // the connection is established") and triggers a storm of RTC renegotiation.
-        if (this._isConnecting()) return;            // an attempt is already underway
         const now = Date.now();
         if (this._lastReconnect && now - this._lastReconnect < 3000) return; // at most once / 3s
         this._lastReconnect = now;
 
+        // Do NOT bail when a socket is stuck in CONNECTING: a connect initiated
+        // while offline can hang in that state indefinitely and never transition,
+        // which silently stops B from ever rejoining the server (A then never
+        // shows B again). Since this only runs on an explicit 'online' event (or a
+        // 10s+ tab refocus), tearing down the stale socket and rebuilding is safe.
         if (this._socket) {
             this._socket.onclose = null;
             try { this._socket.close(); } catch (e) {}
@@ -149,6 +153,7 @@ class Peer {
         this._filesQueue = [];
         this._busy = false;
         this._cancel = false;
+        this._ignoreNextComplete = false; // swallow a confirmation that races a cancel
         this._currentSender = null; // Track current sender for file transfers
     }
 
@@ -169,22 +174,19 @@ class Peer {
     }
 
     _dequeueFile(sender) {
-        this._busy = true;
-        if (!this._filesQueue.length && this._cancel) {
-            Events.fire('close-progress',{sender: this._peerId});
-            this._sendCancelFile(this._peerId)
-            return
-        }
-        
         // Check if queue is empty
         if (!this._filesQueue.length) {
             this._busy = false;
             return;
         }
-        
+        this._busy = true;
+
         this._sendClearCancel()
         Events.fire('clear-cancel', {sender: this._peerId});
         this._cancel = false
+        // A new transfer starts here, so a leftover suppression flag from an
+        // earlier cancel must not swallow this one's confirmation.
+        this._ignoreNextComplete = false
         const file = this._filesQueue.shift();
         // Use provided sender or maintain the current sender context
         const fileSender = sender || this._currentSender;
@@ -214,19 +216,64 @@ class Peer {
             size: file.size,
             sender: sender
         });
+        this._lastUploadProgress = 0;
         this._chunker = new FileChunker(file,
             chunk => {
                 this._send(chunk)
+                this._onUploadProgress()
             },
             offset => this._onPartitionEnd(offset));
-        
+
         this._chunker.nextPartition();
+        Events.fire('transfer-started', { sender: this._peerId });
+    }
+
+    // The sender's ring used to move only when the receiver reported back, so a
+    // transfer going nowhere looked exactly like one that hadn't started yet.
+    // Drive it from our own offset instead. Capped below 1: reaching 1 resets the
+    // ring, and all these bytes are only queued — the real completion still comes
+    // from the receiver via _onTransferCompleted.
+    _onUploadProgress() {
+        if (!this._chunker) return;
+        const progress = Math.min(this._chunker.progress, 0.99);
+        if (progress - this._lastUploadProgress < 0.01) return;
+        this._lastUploadProgress = progress;
+        Events.fire('file-progress', { sender: this._peerId, progress: progress });
     }
     //取消发送当前文件
     cancelSend() {
         this._cancel = true
+        // Actually stop pushing bytes. Just setting the flag isn't enough: the
+        // chunker's read/send loop is self-driving and only checks _cancel at a
+        // 1MB partition boundary, so the rest of the file (often all of it) would
+        // still reach the receiver.
+        if (this._chunker) {
+            this._chunker.abort();
+            this._chunker = null;
+        }
+        // Drop everything that hasn't left this device yet.
+        this._filesQueue = [];
+        this._currentSender = null;
+        this._dropPendingSends();
+        // Reset send state so the next transfer isn't blocked by a stale _busy,
+        // and stop the stall watchdog — otherwise it sees a transfer that stopped
+        // making progress and reports it as a failure 30s later.
         this._busy = false;
-        this._dequeueFile();
+        this._awaitingComplete = false;
+        this._ignoreNextComplete = true;
+        this._stopWatchdogIfIdle();
+        Events.fire('close-progress', { sender: this._peerId });
+        this._sendCancelFile(this._peerId)
+    }
+
+    // Overridden by RTCPeer, which buffers outgoing chunks in a send queue.
+    _dropPendingSends() {}
+
+    // WSPeer has no stall watchdog; on RTCPeer only stop it when nothing else
+    // (e.g. an incoming file from the same peer) is still running.
+    _stopWatchdogIfIdle() {
+        if (typeof this._stopTransferWatchdog !== 'function') return;
+        if (!this._isTransferInProgress()) this._stopTransferWatchdog();
     }
 
     _onPartitionEnd(offset) {
@@ -262,6 +309,11 @@ class Peer {
     }
 
     _onMessage(message) {
+        // Any inbound traffic — a chunk, an ack, a pong — proves someone is still
+        // on the other end. This is the only evidence _isAlive() trusts, because
+        // the channel's readyState keeps reading 'open' for tens of seconds after
+        // a peer vanishes.
+        this._lastInbound = Date.now();
         if (typeof message !== 'string') {
             this._onChunkReceived(message);
             return;
@@ -283,7 +335,13 @@ class Peer {
                 this._sendNextPartition();
                 break;
             case 'progress':
-                this._onDownloadProgress(message.progress);
+                // While we're actively sending, our own offset drives the ring
+                // (_onUploadProgress). Letting the peer's report through too would
+                // make it jump backwards between the two sources.
+                // _awaitingComplete covers the tail: our bytes are all queued and
+                // the ring sits at 0.99, so letting the peer's catch-up reports in
+                // would drag it backwards. _onTransferCompleted finishes it at 1.
+                if (!this._chunker && !this._awaitingComplete) this._onDownloadProgress(message.progress);
                 break;
             case 'transfer-complete':
                 this._onTransferCompleted(sender);
@@ -294,10 +352,16 @@ class Peer {
                 this._transferFailed('remote reported failure', false);
                 break;
             case 'cancel-send':
-                Events.fire('close-progress', {recipient: this._peerId});
+                this._onCancelReceived();
                 break;
             case 'm-clear-cancel':
                 Events.fire('clear-cancel', {recipient: this._peerId});
+                break;
+            case 'ping':
+                this.sendJSON({ type: 'pong' });
+                break;
+            case 'pong':
+                // Nothing to do — receiving it already refreshed _lastInbound.
                 break;
             case 'text':
                 this._onTextReceived(message,sender);
@@ -305,9 +369,18 @@ class Peer {
         }
     }
 
+    // Overridden by RTCPeer. WSPeer relays through the signaling server, which
+    // runs its own keepalive, so it has nothing extra to prove here.
+    _isAlive() {
+        return true;
+    }
+
     _onFileHeader(header, sender) {
         const iceInfo = this.getIceCandidateInfo();
         this._lastProgress = 0;
+        // An incoming file is a different transfer than the one we cancelled; its
+        // completion must still be announced.
+        this._ignoreNextComplete = false;
         this._digester = new FileDigester({
             name: header.name,
             mime: header.mime,
@@ -343,7 +416,29 @@ class Peer {
         this.sendJSON({ type: 'transfer-complete' ,sender: sender});
     }
 
+    // The sender cancelled: throw away what we've collected so far instead of
+    // quietly finishing the file, and tell the user why the transfer vanished.
+    _onCancelReceived() {
+        const wasReceiving = !!this._digester;
+        this._digester = null;
+        this._lastProgress = 0;
+        this._stopWatchdogIfIdle();
+        Events.fire('close-progress', { recipient: this._peerId });
+        // If the file already landed, the cancel just lost the race against the
+        // last chunks — don't contradict the "transfer completed" toast.
+        if (wasReceiving) {
+            Events.fire('notify-user', jQuery.i18n.prop('notify_transfer_cancelled'));
+        }
+    }
+
     _onTransferCompleted(sender) {
+        // If the receiver finished the file just before our cancel reached it, it
+        // still confirms the transfer. Swallow that one stale confirmation instead
+        // of announcing a transfer the user just cancelled as completed.
+        if (this._ignoreNextComplete) {
+            this._ignoreNextComplete = false;
+            return;
+        }
         this._onDownloadProgress(1);
         this._reader = null;
         this._busy = false;
@@ -362,6 +457,17 @@ class Peer {
         this.sendJSON({ type: 'text', text: unescaped, sender: unescapedSender});
     }
 
+    // The peer has been removed from the peer list for good. Drop any transfer
+    // state so nothing keeps running on an object nobody tracks any more.
+    // RTCPeer extends this to tear down its connection and timers.
+    destroy() {
+        this._destroyed = true;
+        this._filesQueue = [];
+        this._chunker = null;
+        this._digester = null;
+        this._busy = false;
+    }
+
     _onTextReceived(message,sender) {
         const escaped = decodeURIComponent(escape(atob(message.text)));
         const escapedSender = decodeURIComponent(escape(atob(sender)));
@@ -376,6 +482,9 @@ class RTCPeer extends Peer {
         super(serverConnection, peerId, peerDisplayname);
         this._sendQueue = [];
         this._flushWatchdog = null;
+        this._reconnectTimer = null;
+        this._disconnectTimer = null;
+        this._reconnecting = false;
         this._transferWatchdog = null;     // detects a stalled/failed transfer
         this._lastTransferActivity = 0;
         this._awaitingComplete = false;    // sender finished pushing bytes, waiting for the receiver's confirmation
@@ -391,29 +500,38 @@ class RTCPeer extends Peer {
         if (isCaller) this._connect(peerId, true);
     }
 
-    _connect(peerId, isCaller) {
+    _connect(peerId, isCaller, isPolite) {
+        if (this._destroyed) return;
         // Always (re)negotiate on a brand-new RTCPeerConnection — never re-offer on
         // a reused one. Re-offering on a connection that already carried a
         // negotiation throws "The order of m-lines in subsequent offer doesn't
         // match" and permanently wedges reconnection (only a page refresh recovers).
-        this._openConnection(peerId, isCaller);
+        this._reconnecting = true;
+        this._disarmConnectTimers();
+        this._openConnection(peerId, isCaller, isPolite);
+
+        // Always capture incoming channels, even when we are the caller. When both
+        // ends reconnect at the same time, perfect negotiation makes the polite
+        // end yield and answer the other's offer — its own channel is then handed
+        // to us via 'ondatachannel', not 'onopen'.
+        this._conn.ondatachannel = e => this._onChannelOpened(e);
 
         if (isCaller) {
             this._openChannel();
-        } else {
-            this._conn.ondatachannel = e => this._onChannelOpened(e);
         }
     }
 
-    _openConnection(peerId, isCaller) {
+    _openConnection(peerId, isCaller, isPolite) {
         // Tear down any previous connection first so we always start clean.
         if (this._conn) { try { this._conn.close(); } catch (e) {} }
         this._channel = null;
         this._isCaller = isCaller;
-        // Perfect-negotiation roles: exactly one side is the caller, so use it
-        // as a stable tie-breaker. The callee is the "polite" peer that yields
-        // on a collision; the caller is "impolite" and keeps its own offer.
-        this._isPolite = !isCaller;
+        // Perfect-negotiation roles. Exactly one side must stay "impolite" for
+        // simultaneous reconnects to resolve cleanly: the impolite peer keeps its
+        // own offer on a collision, the polite peer rolls back and yields.
+        // The role is decided ONCE when the peer is first created and then kept
+        // across reconnects, so both ends never agree on the wrong answer.
+        this._isPolite = isPolite !== undefined ? isPolite : !isCaller;
         this._makingOffer = false;
         this._peerId = peerId;
         this._conn = new RTCPeerConnection(RTCPeer.config);
@@ -530,11 +648,43 @@ class RTCPeer extends Peer {
         channel.bufferedAmountLowThreshold = this._bufferedAmountLowThreshold;
         channel.onbufferedamountlow = e => this._onBufferedAmountLow();
         this._channel = channel;
+        this._reconnecting = false;
+        this._disarmConnectTimers();
         this._reconnectAttempts = 0; // healthy again
+        this._startHeartbeat();
+        // A sticky "reconnecting" notice (if shown) should disappear now that the
+        // peer is reachable again.
+        Events.fire('notify-user-hide');
+    }
+
+    // Keeps a trickle of traffic going while idle so _lastInbound stays meaningful.
+    // During a transfer the acks and progress reports refresh it on their own, so
+    // these pings only matter between transfers — which is exactly when the send
+    // path needs to know whether the peer is still there.
+    _startHeartbeat() {
+        this._stopHeartbeat();
+        // Nothing has had a chance to answer yet; assume alive until proven otherwise.
+        this._lastInbound = Date.now();
+        this._heartbeatTimer = setInterval(() => {
+            if (!this._isConnected()) return;
+            // Data in flight already proves liveness; don't add pings to a queue
+            // that's busy carrying chunks.
+            if (this._isTransferInProgress()) return;
+            this.sendJSON({ type: 'ping' });
+        }, RTCPeer.HEARTBEAT_INTERVAL);
+    }
+
+    _stopHeartbeat() {
+        if (this._heartbeatTimer) {
+            clearInterval(this._heartbeatTimer);
+            this._heartbeatTimer = null;
+        }
     }
 
     _onChannelClosed() {
+        if (this._destroyed) return;
         this._channel = null;
+        this._stopHeartbeat();
         // Stop the flush watchdog and drop any half-sent queue so a later transfer
         // doesn't inherit stale chunks.
         this._clearFlushWatchdog();
@@ -544,19 +694,61 @@ class RTCPeer extends Peer {
         if (this._isTransferInProgress()) {
             this._transferFailed('connection lost');
         }
-        // Only the caller re-initiates. Don't stack reconnects if one is running.
-        if (!this._isCaller) return;
-        if (this._isConnecting()) return;
+        // Reconnect regardless of our caller/callee role, otherwise a dead callee
+        // would sit forever waiting for an offer that never comes. The perfect-
+        // negotiation role saved in _isPolite resolves any simultaneous offers.
+        // Don't stack reconnects if one is already running.
+        if (this._reconnecting) return;
+        if (this._isConnected()) return;
 
         this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
         if (this._reconnectAttempts > RTCPeer.MAX_RECONNECT_ATTEMPTS) {
             // Peer is unreachable after several tries (e.g. it stayed backgrounded
             // or really went away): drop it from the list instead of retrying forever.
             Events.fire('peer-left', this._peerId);
+            // A persistent "reconnecting" notice can no longer be fulfilled by
+            // automation (the peer is gone for good), so stop showing it and tell
+            // the user to refresh instead of leaving a stale hint up forever.
+            Events.fire('notify-user-hide');
+            Events.fire('notify-user-persist', jQuery.i18n.prop('notify_peer_lost'));
             return;
         }
-        // Reconnect on a brand-new connection (see _connect / _openConnection).
-        this._connect(this._peerId, true);
+        // The caller reconnects immediately; the callee waits a moment so the
+        // caller's offer usually arrives first and we avoid needless glare. If no
+        // offer comes, the callee drives the reconnection itself.
+        const delay = this._isCaller ? 0 : RTCPeer.CALLEE_RECONNECT_DELAY;
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            // The caller's offer may have arrived during our wait and already
+            // rebuilt the connection (via onServerMessage). Don't stack a second
+            // connection on top of it.
+            if (this._reconnecting || this._isConnected()) return;
+            // Reconnect on a brand-new connection (see _connect / _openConnection),
+            // opening our own channel and keeping our settled perfect-negotiation role.
+            this._connect(this._peerId, true, this._isPolite);
+        }, delay);
+    }
+
+    _armDisconnectTimer() {
+        // 'disconnected' often never recovers on its own (NAT timeout, VPN switch,
+        // backgrounded tab). Give it a short grace period, then force the same
+        // reconnect path instead of hanging on "Reconnecting…" indefinitely.
+        if (this._disconnectTimer) return;
+        this._disconnectTimer = setTimeout(() => {
+            this._disconnectTimer = null;
+            if (!this._isConnected() && !this._isConnecting()) {
+                this._reconnecting = false;
+                this._onChannelClosed();
+            }
+        }, RTCPeer.DISCONNECTED_GRACE_PERIOD);
+    }
+
+    _disarmConnectTimers() {
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+        clearTimeout(this._disconnectTimer);
+        this._disconnectTimer = null;
     }
 
     _onBufferedAmountLow() {
@@ -567,10 +759,19 @@ class RTCPeer extends Peer {
         
         switch (this._conn.connectionState) {
             case 'disconnected':
-                // May still recover on its own; don't tear it down yet. If it
-                // doesn't recover it progresses to 'failed' below.
+                // May still recover on its own; arm a watchdog that gives up on it.
+                this._armDisconnectTimer();
+                break;
+            case 'connected':
+                this._disarmConnectTimers();
+                this._reconnectAttempts = 0;
                 break;
             case 'failed':
+                // The reconnection attempt itself failed: clear the in-flight flag
+                // (it was set by _connect) so _onChannelClosed is allowed to
+                // schedule the next retry instead of dead-locking on the guard.
+                this._reconnecting = false;
+                this._disarmConnectTimers();
                 // Try to re-establish (fresh connection) a few times; give up and
                 // remove the peer only after repeated failures (_onChannelClosed).
                 this._onChannelClosed();
@@ -633,6 +834,13 @@ class RTCPeer extends Peer {
                 return;
             }
         }
+        this._clearFlushWatchdog();
+    }
+
+    // Chunks that are still queued here never reached the data channel, so a
+    // cancel can drop them outright.
+    _dropPendingSends() {
+        this._sendQueue = [];
         this._clearFlushWatchdog();
     }
 
@@ -721,12 +929,58 @@ class RTCPeer extends Peer {
     }
 
     refresh() {
-        if (this._isConnected() || this._isConnecting()) return;
-        this._connect(this._peerId, this._isCaller);
+        if (this._destroyed) return;
+        if (this._isConnected()) return;
+        // A data channel stuck in 'connecting' has the same dead-end symptom as a
+        // closed one (nothing will ever transition it). Force a fresh connection
+        // instead of returning early — that early-return is what left users stuck
+        // on "Reconnecting…" forever.
+        if (this._reconnecting) return; // a reconnect is already underway
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+        this._reconnecting = true;
+        this._connect(this._peerId, true, this._isPolite);
+    }
+
+    // Closing _conn also closes its data channel, which fires channel.onclose ->
+    // _onChannelClosed -> another scheduled _connect. Detach the handler and stop
+    // every timer first, otherwise a peer that was just removed from the list
+    // lives on as an orphan: rebuilding connections, re-offering to a peer id the
+    // server no longer knows, and eventually posting a bogus "connection lost,
+    // refresh the page" notice while everything else works fine.
+    destroy() {
+        super.destroy();
+        this._disarmConnectTimers();
+        this._clearFlushWatchdog();
+        this._stopTransferWatchdog();
+        this._stopHeartbeat();
+        this._sendQueue = [];
+        if (this._channel) {
+            this._channel.onclose = null;
+            try { this._channel.close(); } catch (e) {}
+        }
+        this._channel = null;
+        if (this._conn) { try { this._conn.close(); } catch (e) {} }
+        this._conn = null;
     }
 
     _isConnected() {
         return this._channel && this._channel.readyState === 'open';
+    }
+
+    // Deliberately NOT folded into _isConnected(). That one gates the whole
+    // reconnect machinery, and making it depend on traffic freshness would have it
+    // tear down and rebuild connections on every hiccup. Only the send path asks
+    // this stricter question.
+    _isAlive() {
+        if (!this._isConnected()) return false;
+        // A transfer already in flight has its own stall watchdog; don't second-
+        // guess it here. Pings queue behind file data, so on a slow link
+        // _lastInbound can go stale while everything is in fact still working —
+        // rejecting a second file in that window would be a false alarm.
+        if (this._isTransferInProgress()) return true;
+        if (!this._lastInbound) return true; // channel just opened, no round trip yet
+        return Date.now() - this._lastInbound < RTCPeer.PEER_SILENCE_TIMEOUT;
     }
 
     _isConnecting() {
@@ -823,13 +1077,23 @@ class PeersManager {
         peer.sendText(message.text,message.from);
     }
 
-    // Returns true if the peer's data channel is open. Otherwise notifies the user,
-    // triggers a reconnect, and returns false so the caller aborts (no silent hang).
+    // Returns true if the peer's data channel is open. Otherwise resets the UI,
+    // shows a sticky "reconnecting" notice, triggers a reconnect, and returns
+    // false so the caller aborts (no silent hang, no phantom cancel button).
     _ensurePeerReady(peer) {
         // WSPeer (fallback) has no data channel — always allow it through.
         if (typeof peer._isConnected !== 'function') return true;
-        if (peer._isConnected()) return true;
-        Events.fire('notify-user', jQuery.i18n.prop('notify_peer_unreachable'));
+        // _isAlive(), not _isConnected(): a channel still reading 'open' whose peer
+        // went silent would otherwise swallow the file and show nothing for 30s,
+        // until the stall watchdog finally reported a failure.
+        if (peer._isAlive()) return true;
+        // The UI already shows the cancel button / progress ring for this transfer
+        // (it renders on file selection). Since nothing will be sent, undo that
+        // state so the peer card goes back to idle instead of "stuck at 0%".
+        Events.fire('close-progress', { sender: peer._peerId });
+        // A sticky notice that stays until the channel reopens, not a 3s toast
+        // the user easily misses. Hidden again in _onChannelOpened.
+        Events.fire('notify-user-persist', jQuery.i18n.prop('notify_peer_unreachable'));
         if (typeof peer.refresh === 'function') peer.refresh();
         return false;
     }
@@ -837,8 +1101,10 @@ class PeersManager {
     _onPeerLeft(peerId) {
         const peer = this.peers[peerId];
         delete this.peers[peerId];
-        if (!peer || !peer._conn) return;
-        peer._conn.close();
+        if (!peer) return;
+        // Full teardown, not just _conn.close(): closing the connection alone
+        // leaves this object's timers running and re-triggers its own reconnect.
+        peer.destroy();
     }
 
     //修改peer的名字
@@ -886,6 +1152,7 @@ class FileChunker {
         this._file = file;
         this._onChunk = onChunk;
         this._onPartitionEnd = onPartitionEnd;
+        this._aborted = false;
         this._reader = new FileReader();
         this._reader.addEventListener('load', e => this._onChunkRead(e.target.result));
     }
@@ -900,7 +1167,16 @@ class FileChunker {
         this._reader.readAsArrayBuffer(chunk);
     }
 
+    // Stop the read/send loop. The guard in _onChunkRead matters as much as
+    // reader.abort(): a read that already finished has its 'load' event queued
+    // and would otherwise push one more chunk (and possibly signal file-end).
+    abort() {
+        this._aborted = true;
+        try { this._reader.abort(); } catch (e) {}
+    }
+
     _onChunkRead(chunk) {
+        if (this._aborted) return;
         this._offset += chunk.byteLength;
         this._partitionSize += chunk.byteLength;
         this._onChunk(chunk);
@@ -980,6 +1256,10 @@ class Events {
 }
 
 RTCPeer.MAX_RECONNECT_ATTEMPTS = 5;
+RTCPeer.HEARTBEAT_INTERVAL = 5000;      // ms between idle pings on the data channel
+RTCPeer.PEER_SILENCE_TIMEOUT = 15000;   // ms without any inbound traffic => treat the peer as gone
+RTCPeer.CALLEE_RECONNECT_DELAY = 1500; // ms the callee waits before driving a reconnect itself
+RTCPeer.DISCONNECTED_GRACE_PERIOD = 5000; // ms a 'disconnected' state is given to recover before forcing a reconnect
 RTCPeer.TRANSFER_STALL_TIMEOUT = 30000; // ms with no progress => transfer failed
 RTCPeer.config = {
     'sdpSemantics': 'unified-plan',
