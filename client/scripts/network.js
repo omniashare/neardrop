@@ -241,15 +241,19 @@ class Peer {
         console.error('RTC: aborting transfer, file changed on disk -', error, this._peerId);
         if (typeof this._transferFailed === 'function') {
             // RTCPeer: reuses the existing abort/reset/notify-peer machinery,
-            // just with a message that explains what actually happened.
-            this._transferFailed('file changed on disk while sending', true, 'notify_file_changed');
+            // just with a message that explains what actually happened, and a
+            // reasonCode so the *other* side's console/UI can show the real
+            // cause too instead of a generic "remote reported failure".
+            this._transferFailed('file changed on disk while sending', true, 'notify_file_changed', 'file-changed');
             return;
         }
         // WSPeer has no stall-watchdog/transfer-failed machinery of its own
-        // (the signaling-relay fallback never needed one) — reset minimally here.
+        // (the signaling-relay fallback never needed one) — reset minimally here,
+        // but still tell the peer why, same as the RTCPeer path above.
         this._chunker = null;
         this._busy = false;
         this._filesQueue = [];
+        try { this.sendJSON({ type: 'transfer-failed', reasonCode: 'file-changed' }); } catch (e) {}
         Events.fire('close-progress', { sender: this._peerId });
         Events.fire('notify-user', jQuery.i18n.prop('notify_file_changed'));
     }
@@ -351,7 +355,7 @@ class Peer {
             sender = message.sender
         }
         if (message.type !== 'ping' && message.type !== 'pong' && message.type !== 'progress') {
-            console.log('RTC: recv', message.type, message.offset !== undefined ? 'offset=' + message.offset : '', this._peerId);
+            console.log('RTC: recv', message.type, message.offset !== undefined ? 'offset=' + message.offset : '', message.reasonCode ? 'reasonCode=' + message.reasonCode : '', this._peerId);
         }
         switch (message.type) {
             case 'header':
@@ -375,11 +379,31 @@ class Peer {
             case 'transfer-complete':
                 this._onTransferCompleted(sender);
                 break;
-            case 'transfer-failed':
+            case 'transfer-failed': {
                 // The other side reported the transfer failed; abort locally too
                 // (don't echo the notification back — false to avoid a ping-pong).
-                this._transferFailed('remote reported failure', false);
+                // Show a reason-specific, receiver-phrased message when we know why —
+                // a generic "please try again" is actively wrong for e.g. a file that
+                // changed on the sender's disk, since retrying won't help and there's
+                // nothing on this side to "resend".
+                const reason = message.reasonCode ? 'remote reported failure: ' + message.reasonCode : 'remote reported failure';
+                const receiverMessageKey = message.reasonCode === 'file-changed' ? 'notify_file_changed_remote' : 'notify_transfer_failed';
+                if (typeof this._transferFailed === 'function') {
+                    this._transferFailed(reason, false, receiverMessageKey);
+                } else {
+                    // WSPeer has no _transferFailed/watchdog machinery — reset
+                    // minimally here, mirroring _onFileReadError's fallback.
+                    console.warn('RTC: transfer failed -', reason, this._peerId);
+                    this._chunker = null;
+                    this._busy = false;
+                    this._filesQueue = [];
+                    this._digester = null;
+                    this._lastProgress = 0;
+                    Events.fire('close-progress', { sender: this._peerId, recipient: this._peerId });
+                    Events.fire('notify-user', jQuery.i18n.prop(receiverMessageKey));
+                }
                 break;
+            }
             case 'cancel-send':
                 this._onCancelReceived();
                 break;
@@ -937,15 +961,17 @@ class RTCPeer extends Peer {
 
     // Abort the current transfer, reset send/receive state, clear the progress UI
     // and tell the user it failed.
-    _transferFailed(reason, notifyPeer = true, messageKey = 'notify_transfer_failed') {
+    _transferFailed(reason, notifyPeer = true, messageKey = 'notify_transfer_failed', reasonCode = null) {
         if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
         console.warn('RTC: transfer failed -', reason, this._peerId);
         this._stopTransferWatchdog();
         // Best-effort: tell the other side so it also aborts and shows the failure,
         // instead of waiting out its own 30s stall timeout. If the channel is dead
-        // this simply no-ops and each side falls back to its own watchdog.
+        // this simply no-ops and each side falls back to its own watchdog. Include
+        // reasonCode so the other side can show a specific message too, instead of
+        // a generic "transfer failed" that may not even be actionable there.
         if (notifyPeer && this._channel && this._channel.readyState === 'open') {
-            try { this._channel.send(JSON.stringify({ type: 'transfer-failed' })); } catch (e) {}
+            try { this._channel.send(JSON.stringify({ type: 'transfer-failed', reasonCode })); } catch (e) {}
         }
         // reset sender state
         this._chunker = null;
