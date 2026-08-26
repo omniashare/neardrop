@@ -1,5 +1,17 @@
 const $ = query => document.getElementById(query);
 const $$ = query => document.body.querySelector(query);
+
+// notify-user toasts pass either a plain string (the common case, 3s) or
+// {message, isError: true} when the toast needs more time — error messages
+// tend to be longer and matter more, so they shouldn't vanish at the same
+// pace as "Copied to clipboard".
+function notifyMessageText(detail) {
+    return (detail && typeof detail === 'object') ? detail.message : detail;
+}
+
+function notifyDuration(detail) {
+    return (detail && typeof detail === 'object' && detail.isError) ? 7000 : 3000;
+}
 const isURL = text => /^((https?:\/\/|www)[^\s]+)/g.test(text.toLowerCase());
 window.isDownloadSupported = (typeof document.createElement('a').download !== 'undefined');
 window.isProductionEnvironment = !window.location.host.startsWith('localhost');
@@ -772,15 +784,7 @@ class Toast extends Dialog {
 
     _onNotfiy(detail) {
         clearTimeout(this._hideTimer);
-        // Callers pass either a plain string (the common case) or
-        // {message, isError} when the toast needs more than the default 3s —
-        // error messages tend to be longer and matter more, so give them time
-        // to actually be read instead of vanishing at the same pace as
-        // "Copied to clipboard".
-        const isObject = detail && typeof detail === 'object';
-        const message = isObject ? detail.message : detail;
-        const duration = isObject && detail.isError ? 7000 : 3000;
-        this.$el.textContent = message;
+        this.$el.textContent = notifyMessageText(detail);
         this.show();
         this._hideTimer = setTimeout(_ => {
             // A sticky message (e.g. "You are offline") must reassert itself
@@ -790,7 +794,7 @@ class Toast extends Dialog {
             } else {
                 this.hide();
             }
-        }, duration);
+        }, notifyDuration(detail));
     }
 
     // Show a message that stays until _onHidePersist() is called.

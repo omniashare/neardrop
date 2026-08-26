@@ -13,6 +13,15 @@ function classifyFileReadError(error) {
     return { messageKey: 'notify_transfer_failed', reasonCode: null };
 }
 
+// Maps a reasonCode carried on an incoming 'transfer-failed' message to the
+// message key the *receiving* side should show. A reason-specific message is
+// only shown when it's actually written from the receiver's point of view;
+// anything else (or no reason at all) falls back to the generic failure text.
+function reasonCodeToReceiverMessageKey(reasonCode) {
+    if (reasonCode === 'file-changed') return 'notify_file_changed_remote';
+    return 'notify_transfer_failed';
+}
+
 class ServerConnection {
 
     constructor() {
@@ -403,7 +412,7 @@ class Peer {
                 // changed on the sender's disk, since retrying won't help and there's
                 // nothing on this side to "resend".
                 const reason = message.reasonCode ? 'remote reported failure: ' + message.reasonCode : 'remote reported failure';
-                const receiverMessageKey = message.reasonCode === 'file-changed' ? 'notify_file_changed_remote' : 'notify_transfer_failed';
+                const receiverMessageKey = reasonCodeToReceiverMessageKey(message.reasonCode);
                 if (typeof this._transferFailed === 'function') {
                     this._transferFailed(reason, false, receiverMessageKey);
                 } else {
