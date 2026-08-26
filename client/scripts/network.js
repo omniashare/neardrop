@@ -934,6 +934,13 @@ class RTCPeer extends Peer {
         return sending || receiving;
     }
 
+    // True when a transfer is in progress AND has been idle past the stall
+    // timeout. Extracted so it can be re-checked after an async gap (see
+    // _markTransferActivity below) instead of only once before it.
+    _isStalled() {
+        return this._isTransferInProgress() && (Date.now() - this._lastTransferActivity > RTCPeer.TRANSFER_STALL_TIMEOUT);
+    }
+
     // Called whenever a transfer makes progress (file start, partition ack, chunk
     // received). Refreshes the deadline and (re)arms the stall watchdog.
     _markTransferActivity() {
@@ -941,14 +948,17 @@ class RTCPeer extends Peer {
         if (this._transferWatchdog) return;
         this._transferWatchdog = setInterval(async () => {
             if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
-            if (Date.now() - this._lastTransferActivity > RTCPeer.TRANSFER_STALL_TIMEOUT) {
-                // One-time diagnostic at the moment of failure (not a recurring
-                // tick log): which candidate pair — host/srflx/relay — the stalled
-                // transfer was actually using.
-                const info = await this.getIceCandidateInfo();
-                console.warn('RTC: stall detected, candidate pair at failure time:', info);
-                this._transferFailed('stalled (no progress)');
-            }
+            if (!this._isStalled()) return;
+            // One-time diagnostic at the moment of failure (not a recurring
+            // tick log): which candidate pair — host/srflx/relay — the stalled
+            // transfer was actually using.
+            const info = await this.getIceCandidateInfo();
+            // Re-check after the await: progress may have resumed (or the
+            // transfer may have finished outright) while we were waiting on
+            // getStats(), and that must not be clobbered by a stale verdict.
+            if (!this._isStalled()) return;
+            console.warn('RTC: stall detected, candidate pair at failure time:', info);
+            this._transferFailed('stalled (no progress)');
         }, 2000);
     }
 
