@@ -223,7 +223,6 @@ class Peer {
     _sendFile(file,sender) {
         if(!file) return
         this._markTransferActivity(); // start the stall watchdog for this transfer
-        const iceInfo = this.getIceCandidateInfo();
         this.sendJSON({
             type: 'header',
             name: file.name,
@@ -446,7 +445,6 @@ class Peer {
     }
 
     _onFileHeader(header, sender) {
-        const iceInfo = this.getIceCandidateInfo();
         this._lastProgress = 0;
         // An incoming file is a different transfer than the one we cancelled; its
         // completion must still be announced.
@@ -523,7 +521,6 @@ class Peer {
     }
 
     sendText(text,sender) {
-        const iceInfo = this.getIceCandidateInfo();
         const unescaped = btoa(unescape(encodeURIComponent(text)));
         const unescapedSender = btoa(unescape(encodeURIComponent(sender)));
         this.sendJSON({ type: 'text', text: unescaped, sender: unescapedSender});
@@ -543,7 +540,6 @@ class Peer {
     _onTextReceived(message,sender) {
         const escaped = decodeURIComponent(escape(atob(message.text)));
         const escapedSender = decodeURIComponent(escape(atob(sender)));
-        const iceInfo = this.getIceCandidateInfo();
         Events.fire('text-received', { text: escaped, sender: escapedSender });
     }
 }
