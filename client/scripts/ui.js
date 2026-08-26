@@ -770,8 +770,16 @@ class Toast extends Dialog {
         Events.on('notify-user-hide', e => this._onHidePersist());
     }
 
-    _onNotfiy(message) {
+    _onNotfiy(detail) {
         clearTimeout(this._hideTimer);
+        // Callers pass either a plain string (the common case) or
+        // {message, isError} when the toast needs more than the default 3s —
+        // error messages tend to be longer and matter more, so give them time
+        // to actually be read instead of vanishing at the same pace as
+        // "Copied to clipboard".
+        const isObject = detail && typeof detail === 'object';
+        const message = isObject ? detail.message : detail;
+        const duration = isObject && detail.isError ? 7000 : 3000;
         this.$el.textContent = message;
         this.show();
         this._hideTimer = setTimeout(_ => {
@@ -782,7 +790,7 @@ class Toast extends Dialog {
             } else {
                 this.hide();
             }
-        }, 3000);
+        }, duration);
     }
 
     // Show a message that stays until _onHidePersist() is called.
@@ -820,7 +828,7 @@ class Notifications {
     _requestPermission() {
         Notification.requestPermission(permission => {
             if (permission !== 'granted') {
-                Events.fire('notify-user', Notifications.PERMISSION_ERROR || 'Error');
+                Events.fire('notify-user', { message: Notifications.PERMISSION_ERROR || 'Error', isError: true });
                 return;
             }
             this._notify(jQuery.i18n.prop('notify_sharing'));

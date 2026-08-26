@@ -255,7 +255,7 @@ class Peer {
         this._filesQueue = [];
         try { this.sendJSON({ type: 'transfer-failed', reasonCode: 'file-changed' }); } catch (e) {}
         Events.fire('close-progress', { sender: this._peerId });
-        Events.fire('notify-user', jQuery.i18n.prop('notify_file_changed'));
+        Events.fire('notify-user', { message: jQuery.i18n.prop('notify_file_changed'), isError: true });
     }
 
     // The sender's ring used to move only when the receiver reported back, so a
@@ -400,7 +400,7 @@ class Peer {
                     this._digester = null;
                     this._lastProgress = 0;
                     Events.fire('close-progress', { sender: this._peerId, recipient: this._peerId });
-                    Events.fire('notify-user', jQuery.i18n.prop(receiverMessageKey));
+                    Events.fire('notify-user', { message: jQuery.i18n.prop(receiverMessageKey), isError: true });
                 }
                 break;
             }
@@ -983,7 +983,7 @@ class RTCPeer extends Peer {
         this._lastProgress = 0;
         // reset the progress ring and notify the user
         Events.fire('close-progress', { sender: this._peerId, recipient: this._peerId });
-        Events.fire('notify-user', jQuery.i18n.prop(messageKey));
+        Events.fire('notify-user', { message: jQuery.i18n.prop(messageKey), isError: true });
     }
 
     _sendSignal(signal) {
