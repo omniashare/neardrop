@@ -1,7 +1,8 @@
 (function() {
     let current_lang = localStorage.getItem('clanguage')
     if(! current_lang) {
-        localStorage.setItem('clanguage','en')
+        current_lang = 'en'
+        localStorage.setItem('clanguage', current_lang)
     }
     jQuery.i18n.properties({ 
         name: current_lang, 
