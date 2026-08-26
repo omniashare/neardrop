@@ -1,0 +1,14 @@
+{
+  "name": "neardrop",
+  "private": true,
+  "type": "module",
+  "_reppit_managed": "Managed by setup-reppit-workflow.sh (RePPIT)",
+  "scripts": {
+    "reppit:bootstrap": "bash ./scripts/setup-reppit-workflow.sh",
+    "reppit:check": "bash ./scripts/check-reppit-specs.sh",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.5"
+  }
+}
