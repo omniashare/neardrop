@@ -225,10 +225,33 @@ class Peer {
                 this._send(chunk)
                 this._onUploadProgress()
             },
-            offset => this._onPartitionEnd(offset));
+            offset => this._onPartitionEnd(offset),
+            error => this._onFileReadError(error));
 
         this._chunker.nextPartition();
         Events.fire('transfer-started', { sender: this._peerId });
+    }
+
+    // The source file changed on disk (edited, truncated, rotated, moved) after
+    // we grabbed this File reference, so the browser can no longer read the rest
+    // of it — most commonly an actively-written log file. Nothing more can be
+    // sent, so abort now and tell the user why, instead of leaving the RTC stall
+    // watchdog to time out 30s later with a generic "transfer failed".
+    _onFileReadError(error) {
+        console.error('RTC: aborting transfer, file changed on disk -', error, this._peerId);
+        if (typeof this._transferFailed === 'function') {
+            // RTCPeer: reuses the existing abort/reset/notify-peer machinery,
+            // just with a message that explains what actually happened.
+            this._transferFailed('file changed on disk while sending', true, 'notify_file_changed');
+            return;
+        }
+        // WSPeer has no stall-watchdog/transfer-failed machinery of its own
+        // (the signaling-relay fallback never needed one) — reset minimally here.
+        this._chunker = null;
+        this._busy = false;
+        this._filesQueue = [];
+        Events.fire('close-progress', { sender: this._peerId });
+        Events.fire('notify-user', jQuery.i18n.prop('notify_file_changed'));
     }
 
     // The sender's ring used to move only when the receiver reported back, so a
@@ -914,7 +937,7 @@ class RTCPeer extends Peer {
 
     // Abort the current transfer, reset send/receive state, clear the progress UI
     // and tell the user it failed.
-    _transferFailed(reason, notifyPeer = true) {
+    _transferFailed(reason, notifyPeer = true, messageKey = 'notify_transfer_failed') {
         if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
         console.warn('RTC: transfer failed -', reason, this._peerId);
         this._stopTransferWatchdog();
@@ -934,7 +957,7 @@ class RTCPeer extends Peer {
         this._lastProgress = 0;
         // reset the progress ring and notify the user
         Events.fire('close-progress', { sender: this._peerId, recipient: this._peerId });
-        Events.fire('notify-user', jQuery.i18n.prop('notify_transfer_failed'));
+        Events.fire('notify-user', jQuery.i18n.prop(messageKey));
     }
 
     _sendSignal(signal) {
@@ -1162,7 +1185,7 @@ class WSPeer extends Peer {
 
 class FileChunker {
 
-    constructor(file, onChunk, onPartitionEnd) {
+    constructor(file, onChunk, onPartitionEnd, onError) {
         this._chunkSize = 64000; // 64 KB
         this._maxPartitionSize = 1e6; // 1 MB
         this._offset = 0;
@@ -1170,9 +1193,18 @@ class FileChunker {
         this._file = file;
         this._onChunk = onChunk;
         this._onPartitionEnd = onPartitionEnd;
+        this._onError = onError;
         this._aborted = false;
         this._reader = new FileReader();
         this._reader.addEventListener('load', e => this._onChunkRead(e.target.result));
+        // The file changed on disk (edited, truncated, rotated, moved) after we
+        // grabbed this File reference — the browser can no longer read it. Without
+        // this listener the reader just goes silent forever: no 'load' event ever
+        // fires, nothing throws, and the only thing that eventually notices is the
+        // unrelated RTC stall watchdog, 30s later, with no explanation why.
+        this._reader.addEventListener('error', e => {
+            if (!this._aborted && this._onError) this._onError(this._reader.error);
+        });
     }
 
     nextPartition() {
