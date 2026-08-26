@@ -1,6 +1,18 @@
 window.URL = window.URL || window.webkitURL;
 window.isRtcSupported = !!(window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection);
 
+// A FileReader failure only fits the "file changed on disk" story when it's
+// specifically NotReadableError (the file became unreadable after we grabbed
+// the reference — the common case for an actively-written/rotated log file).
+// Other errors (NotFoundError, SecurityError, ...) have different causes and
+// must not be mislabeled with that same message/reasonCode.
+function classifyFileReadError(error) {
+    if (error && error.name === 'NotReadableError') {
+        return { messageKey: 'notify_file_changed', reasonCode: 'file-changed' };
+    }
+    return { messageKey: 'notify_transfer_failed', reasonCode: null };
+}
+
 class ServerConnection {
 
     constructor() {
@@ -238,13 +250,14 @@ class Peer {
     // sent, so abort now and tell the user why, instead of leaving the RTC stall
     // watchdog to time out 30s later with a generic "transfer failed".
     _onFileReadError(error) {
-        console.error('RTC: aborting transfer, file changed on disk -', error, this._peerId);
+        const { messageKey, reasonCode } = classifyFileReadError(error);
+        console.error('RTC: aborting transfer, file read error -', error && error.name, error, this._peerId);
         if (typeof this._transferFailed === 'function') {
             // RTCPeer: reuses the existing abort/reset/notify-peer machinery,
             // just with a message that explains what actually happened, and a
             // reasonCode so the *other* side's console/UI can show the real
             // cause too instead of a generic "remote reported failure".
-            this._transferFailed('file changed on disk while sending', true, 'notify_file_changed', 'file-changed');
+            this._transferFailed('file read error: ' + (error && error.name), true, messageKey, reasonCode);
             return;
         }
         // WSPeer has no stall-watchdog/transfer-failed machinery of its own
@@ -253,9 +266,9 @@ class Peer {
         this._chunker = null;
         this._busy = false;
         this._filesQueue = [];
-        try { this.sendJSON({ type: 'transfer-failed', reasonCode: 'file-changed' }); } catch (e) {}
+        try { this.sendJSON({ type: 'transfer-failed', reasonCode }); } catch (e) {}
         Events.fire('close-progress', { sender: this._peerId });
-        Events.fire('notify-user', { message: jQuery.i18n.prop('notify_file_changed'), isError: true });
+        Events.fire('notify-user', { message: jQuery.i18n.prop(messageKey), isError: true });
     }
 
     // The sender's ring used to move only when the receiver reported back, so a
