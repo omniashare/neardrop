@@ -266,7 +266,11 @@ class Peer {
         this._chunker = null;
         this._busy = false;
         this._filesQueue = [];
-        try { this.sendJSON({ type: 'transfer-failed', reasonCode }); } catch (e) {}
+        try {
+            this.sendJSON({ type: 'transfer-failed', reasonCode });
+        } catch (e) {
+            console.warn('RTC: failed to notify peer of transfer failure:', e, this._peerId);
+        }
         Events.fire('close-progress', { sender: this._peerId });
         Events.fire('notify-user', { message: jQuery.i18n.prop(messageKey), isError: true });
     }
@@ -994,7 +998,11 @@ class RTCPeer extends Peer {
         // reasonCode so the other side can show a specific message too, instead of
         // a generic "transfer failed" that may not even be actionable there.
         if (notifyPeer && this._channel && this._channel.readyState === 'open') {
-            try { this._channel.send(JSON.stringify({ type: 'transfer-failed', reasonCode })); } catch (e) {}
+            try {
+                this._channel.send(JSON.stringify({ type: 'transfer-failed', reasonCode }));
+            } catch (e) {
+                console.warn('RTC: failed to notify peer of transfer failure:', e, this._peerId);
+            }
         }
         // reset sender state
         this._chunker = null;
