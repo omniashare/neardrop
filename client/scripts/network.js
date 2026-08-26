@@ -158,6 +158,9 @@ class Peer {
     }
 
     sendJSON(message) {
+        if (message.type !== 'ping' && message.type !== 'pong' && message.type !== 'progress') {
+            console.log('RTC: send', message.type, message.offset !== undefined ? 'offset=' + message.offset : '', this._peerId);
+        }
         this._send(JSON.stringify(message));
     }
 
@@ -324,6 +327,9 @@ class Peer {
         if(message.sender){
             sender = message.sender
         }
+        if (message.type !== 'ping' && message.type !== 'pong' && message.type !== 'progress') {
+            console.log('RTC: recv', message.type, message.offset !== undefined ? 'offset=' + message.offset : '', this._peerId);
+        }
         switch (message.type) {
             case 'header':
                 this._onFileHeader(message,sender);
@@ -409,6 +415,7 @@ class Peer {
     }
 
     _onFileReceived(proxyFile,sender) {
+        console.log('RTC: file received -', proxyFile.name, '(' + proxyFile.size + ' bytes)', 'from', this._peerId);
         this._digester = null;
         this._stopTransferWatchdog();
         Events.fire('file-received', {file:proxyFile, sender:sender});
@@ -439,6 +446,7 @@ class Peer {
             this._ignoreNextComplete = false;
             return;
         }
+        console.log('RTC: transfer confirmed complete by receiver -', this._peerId);
         this._onDownloadProgress(1);
         this._reader = null;
         this._busy = false;
@@ -541,29 +549,29 @@ class RTCPeer extends Peer {
         
     }
 
-    getIceCandidateInfo() {
+    // NOTE: uses getStats() rather than getSenders()[0].transport, because
+    // getSenders() only returns RTP (media) senders — for a DataChannel-only
+    // connection like this one that array is always empty, so that approach
+    // silently returned null regardless of actual connection health.
+    async getIceCandidateInfo() {
         if (!this._conn) return null;
         try {
-            const selectedPair = this._conn.getSenders()[0]?.transport?.iceTransport?.getSelectedCandidatePair();
-            if (selectedPair) {
-                return {
-                    local: {
-                        type: selectedPair.local?.type,
-                        protocol: selectedPair.local?.protocol,
-                        address: selectedPair.local?.address,
-                        port: selectedPair.local?.port,
-                    },
-                    remote: {
-                        type: selectedPair.remote?.type,
-                        protocol: selectedPair.remote?.protocol,
-                        address: selectedPair.remote?.address,
-                        port: selectedPair.remote?.port,
-                    },
-                    state: selectedPair.state,
-                };
-            }
-        } catch (e) {}
-        return null;
+            const stats = await this._conn.getStats();
+            let pair = null;
+            stats.forEach(r => {
+                if (r.type === 'candidate-pair' && (r.state === 'succeeded' || r.nominated)) pair = r;
+            });
+            if (!pair) return null;
+            const local = stats.get(pair.localCandidateId);
+            const remote = stats.get(pair.remoteCandidateId);
+            return {
+                local: local && { type: local.candidateType, protocol: local.protocol, address: local.address || local.ip, port: local.port },
+                remote: remote && { type: remote.candidateType, protocol: remote.protocol, address: remote.address || remote.ip, port: remote.port },
+                state: pair.state,
+                bytesSent: pair.bytesSent,
+                bytesReceived: pair.bytesReceived,
+            };
+        } catch (e) { return null; }
     }
 
     _openChannel() {
@@ -756,7 +764,7 @@ class RTCPeer extends Peer {
     }
 
     _onConnectionStateChange(e) {
-        
+        console.log('RTC: connectionState ->', this._conn.connectionState, this._peerId);
         switch (this._conn.connectionState) {
             case 'disconnected':
                 // May still recover on its own; arm a watchdog that gives up on it.
@@ -780,6 +788,8 @@ class RTCPeer extends Peer {
     }
 
     _onIceConnectionStateChange() {
+        const state = this._conn.iceConnectionState;
+        this.getIceCandidateInfo().then(info => console.log('RTC: iceConnectionState ->', state, this._peerId, info));
         switch (this._conn.iceConnectionState) {
             case 'failed':
                 break;
@@ -795,9 +805,11 @@ class RTCPeer extends Peer {
 
     _onIceCandidate(event) {
         if (!event.candidate) {
+            console.log('RTC: ICE gathering complete', this._peerId);
             return;
         }
         const c = event.candidate;
+        console.log('RTC: local candidate gathered -', c.type, c.protocol, this._peerId);
         this._sendSignal({ ice: event.candidate });
     }
 
@@ -829,6 +841,7 @@ class RTCPeer extends Peer {
             try {
                 this._channel.send(message);
             } catch (e) {
+                console.warn('RTC: channel.send threw, forcing refresh:', e, this._peerId);
                 this._sendQueue.unshift(message);
                 this.refresh();
                 return;
@@ -879,9 +892,14 @@ class RTCPeer extends Peer {
     _markTransferActivity() {
         this._lastTransferActivity = Date.now();
         if (this._transferWatchdog) return;
-        this._transferWatchdog = setInterval(() => {
+        this._transferWatchdog = setInterval(async () => {
             if (!this._isTransferInProgress()) { this._stopTransferWatchdog(); return; }
             if (Date.now() - this._lastTransferActivity > RTCPeer.TRANSFER_STALL_TIMEOUT) {
+                // One-time diagnostic at the moment of failure (not a recurring
+                // tick log): which candidate pair — host/srflx/relay — the stalled
+                // transfer was actually using.
+                const info = await this.getIceCandidateInfo();
+                console.warn('RTC: stall detected, candidate pair at failure time:', info);
                 this._transferFailed('stalled (no progress)');
             }
         }, 2000);
