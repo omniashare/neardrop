@@ -640,6 +640,7 @@ x-instructions {
     transition: opacity 300ms;
     z-index: -1;
     text-align: center;
+    width: 80%;
 }
 
 x-instructions:before {
